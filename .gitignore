@@ -4,6 +4,7 @@ __pycache__/
 *$py.class
 
 # Virtual environment
+.venv/
 venv/
 env/
 .env
@@ -18,6 +19,7 @@ vpn_bot.db
 *.log
 bot/data/logs/
 bot/data/logs/*
+bot/data/cookies.json
 
 # IDE specific files
 .idea/

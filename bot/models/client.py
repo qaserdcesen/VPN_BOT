@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, Text, Boolean, DateTime, BigInteger, ForeignKey
+from sqlalchemy import Column, Integer, Text, Boolean, DateTime, BigInteger, ForeignKey, JSON
 from bot.utils.db import Base
 
 class Client(Base):
@@ -14,3 +14,4 @@ class Client(Base):
     is_active = Column(Boolean, default=True)
     tg_notified = Column(Boolean, default=False)
     reset = Column(Integer)
+    config_data = Column(Text, nullable=True)  # VPN конфигурация
