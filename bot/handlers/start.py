@@ -44,7 +44,25 @@ async def process_get_config(callback: types.CallbackQuery):
                 await session.commit()
                 await session.refresh(user)
             
-            # Создаем запись клиента
+            # Проверяем, есть ли уже конфиг у этого пользователя
+            client_result = await session.execute(
+                select(Client).where(Client.user_id == user.id)
+            )
+            existing_client = client_result.scalar_one_or_none()
+            
+            if existing_client:
+                # У пользователя уже есть конфиг
+                await callback.message.answer(
+                    "⚠️ У вас уже есть активный VPN конфиг!\n\n"
+                    f"UUID: {existing_client.uuid}\n"
+                    f"Nickname: {existing_client.email}\n"
+                    f"Limit IP: {existing_client.limit_ip}\n"
+                    f"Traffic: {existing_client.total_traffic / (1024 * 1024 * 1024):.1f} GB"
+                )
+                await callback.answer()
+                return
+            
+            # Создаем новый конфиг
             user_uuid = str(uuid.uuid4())
             nickname = f"user_{callback.from_user.id}"
             
