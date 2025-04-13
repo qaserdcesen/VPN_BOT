@@ -1,15 +1,12 @@
-from sqlalchemy import Column, Integer, BigInteger, Text, Boolean, DateTime, Float
+from sqlalchemy import Column, Integer, Text, DateTime, BigInteger
 from datetime import datetime
-from bot.utils.db import Base
+from bot.utils.base import Base
 
 class User(Base):
     __tablename__ = "users"
     
     id = Column(Integer, primary_key=True)
-    tg_id = Column(BigInteger, unique=True, nullable=False)
+    tg_id = Column(BigInteger, unique=True)
     username = Column(Text)
-    is_admin = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.utcnow)
     last_login = Column(DateTime, default=datetime.utcnow)
-    contact = Column(Text)
-    balace = Column(Float, default=0.0)

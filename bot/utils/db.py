@@ -1,11 +1,7 @@
-from bot.models.user import User
-from bot.models.client import Client
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
-from sqlalchemy.orm import sessionmaker, declarative_base
+from sqlalchemy.orm import sessionmaker
 from bot.config import DATABASE_URL
-
-# Базовый класс для моделей
-Base = declarative_base()
+from bot.utils.base import Base
 
 # Создаем асинхронный движок
 engine = create_async_engine(DATABASE_URL, echo=True)

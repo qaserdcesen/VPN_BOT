@@ -1,5 +1,5 @@
-from sqlalchemy import Column, Integer, Text, Boolean, DateTime, BigInteger, ForeignKey, JSON
-from bot.utils.db import Base
+from sqlalchemy import Column, Integer, Text, Boolean, DateTime, BigInteger, ForeignKey
+from bot.utils.base import Base  # Импортируем Base из base.py
 
 class Client(Base):
     __tablename__ = "clients"
