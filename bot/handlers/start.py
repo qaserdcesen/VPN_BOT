@@ -9,6 +9,7 @@ from bot.models.user import User
 from sqlalchemy import select
 from bot.keyboards.instruction_kb import get_instruction_keyboard
 from bot.keyboards.user_menu_kb import get_user_menu_keyboard
+from bot.keyboards.subscription_kb import get_tariffs_info, get_tariffs_keyboard, get_payment_keyboard, TARIFFS
 
 router = Router()
 vpn_service = VPNService()
@@ -115,16 +116,62 @@ async def process_profile(message: types.Message):
     await message.answer("Информация о вашем профиле...")
 
 @router.message(lambda message: message.text == "Подписка и оплата")
-async def process_subscription(message: types.Message):
-    await message.answer("Информация о подписке и оплате...")
+async def show_subscription_info(message: types.Message):
+    # Отправляем информацию о тарифах и кнопки выбора
+    await message.answer(
+        get_tariffs_info(),
+        reply_markup=get_tariffs_keyboard()
+    )
 
-@router.message(lambda message: message.text == "Бонусы")
-async def process_bonuses(message: types.Message):
-    await message.answer("Информация о бонусах...")
+@router.callback_query(lambda c: c.data.startswith("tariff_"))
+async def process_tariff_selection(callback: types.CallbackQuery):
+    # Получаем выбранный тариф
+    tariff_key = callback.data.replace("tariff_", "")
+    tariff = TARIFFS.get(tariff_key)
+    
+    if not tariff:
+        await callback.answer("Тариф не найден")
+        return
+    
+    # Отправляем сообщение с выбранным тарифом и кнопками оплаты
+    await callback.message.edit_text(
+        f"Выбран тариф: {tariff['name']}\n"
+        f"Стоимость: {tariff['price']}₽/месяц\n"
+        f"Трафик: {tariff['traffic']}\n"
+        f"Количество IP: {tariff['ips']}\n\n"
+        f"Выберете тип оплаты:",
+        reply_markup=get_payment_keyboard()
+    )
+    await callback.answer()
 
-@router.message(lambda message: message.text == "Инфо")
-async def process_info(message: types.Message):
-    await message.answer("Общая информация...")
+@router.callback_query(lambda c: c.data == "pay_bonus")
+async def process_bonus_payment(callback: types.CallbackQuery):
+    await callback.message.edit_text(
+        "Оплата с бонусного баланса выбрана. Проверяем баланс..."
+    )
+    # Здесь будет логика проверки баланса и проведения оплаты
+    # ...
+    await callback.answer()
+
+@router.callback_query(lambda c: c.data == "pay_card")
+async def process_card_payment(callback: types.CallbackQuery):
+    await callback.message.edit_text(
+        "Вы выбрали оплату банковской картой/СБП/SbaerPay.\n"
+        "Перенаправляем на страницу оплаты..."
+    )
+    # Здесь будет логика перенаправления на платежный шлюз
+    # ...
+    await callback.answer()
+
+# Обработчик для кнопки "Назад" при выборе способа оплаты
+@router.callback_query(lambda c: c.data == "back_to_tariffs")
+async def back_to_tariffs(callback: types.CallbackQuery):
+    # Возвращаемся к выбору тарифов
+    await callback.message.edit_text(
+        get_tariffs_info(),
+        reply_markup=get_tariffs_keyboard()
+    )
+    await callback.answer()
 
 def register_handlers(dp: Dispatcher):
     dp.include_router(router)
