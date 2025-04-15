@@ -7,6 +7,8 @@ from bot.utils.db import async_session
 from bot.models.client import Client
 from bot.models.user import User
 from sqlalchemy import select
+from bot.keyboards.instruction_kb import get_instruction_keyboard
+from bot.keyboards.user_menu_kb import get_user_menu_keyboard
 
 router = Router()
 vpn_service = VPNService()
@@ -71,8 +73,8 @@ async def process_get_config(callback: types.CallbackQuery):
             user_uuid = str(uuid.uuid4())
             nickname = f"user_{callback.from_user.id}"
             
-            # Создаем конфиг на сервере
-            await vpn_service.create_config(nickname, user_uuid)
+            # Создаем конфиг на сервере и получаем URL
+            success, vpn_url = await vpn_service.create_config(nickname, user_uuid)
             
             # Сохраняем в базу
             client = Client(
@@ -81,14 +83,24 @@ async def process_get_config(callback: types.CallbackQuery):
                 uuid=user_uuid,
                 limit_ip=3,
                 total_traffic=2 * 1024 * 1024 * 1024,
-                is_active=True
+                is_active=True,
+                config_data=vpn_url  # Сохраняем URL конфига
             )
             session.add(client)
             await session.commit()
 
-            # Отправляем сообщение об успехе
+            # Отправляем сообщение об успехе с конфигом И устанавливаем клавиатуру меню
             await callback.message.answer(
-                f"✅ VPN создан успешно!\n\n{format_client_info(client)}"
+                f"✅ VPN создан успешно!\n\n{format_client_info(client)}\n\n"
+                f"<code>{vpn_url}</code>",
+                parse_mode="HTML",
+                reply_markup=get_user_menu_keyboard()  # Добавляем клавиатуру к первому сообщению
+            )
+            
+            # Отправляем последнее сообщение с инструкциями
+            await callback.message.answer(
+                "📱 Выберите устройство для просмотра инструкции по установке VPN:",
+                reply_markup=get_instruction_keyboard()
             )
     
     except Exception as e:
@@ -96,6 +108,23 @@ async def process_get_config(callback: types.CallbackQuery):
         print(f"Ошибка: {str(e)}")
     
     await callback.answer()
+
+# Обновляем обработчики для кнопок меню, теперь используем текст сообщения вместо callback_data
+@router.message(lambda message: message.text == "Мой профиль")
+async def process_profile(message: types.Message):
+    await message.answer("Информация о вашем профиле...")
+
+@router.message(lambda message: message.text == "Подписка и оплата")
+async def process_subscription(message: types.Message):
+    await message.answer("Информация о подписке и оплате...")
+
+@router.message(lambda message: message.text == "Бонусы")
+async def process_bonuses(message: types.Message):
+    await message.answer("Информация о бонусах...")
+
+@router.message(lambda message: message.text == "Инфо")
+async def process_info(message: types.Message):
+    await message.answer("Общая информация...")
 
 def register_handlers(dp: Dispatcher):
     dp.include_router(router)

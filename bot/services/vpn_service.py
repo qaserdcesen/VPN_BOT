@@ -4,6 +4,29 @@ import os
 from bot.config import API_BASE_URL, INBOUND_ID, API_USERNAME, API_PASSWORD, COOKIES_FILE
 from yarl import URL
 
+class VPNSettings:
+    def __init__(self, 
+                 host="qaserdcesen.minecraftnoob.com",
+                 port=443,
+                 type="tcp",
+                 security="reality",
+                 pbk="LtGGe_WR1PR3JdlvdEcURLVimtOl9_EERwt_kPT8mRk",
+                 fp="chrome",
+                 sni="google.com",
+                 sid="9c15e6373b6177e9",
+                 spx="/",
+                 flow="xtls-rprx-vision"):
+        self.host = host
+        self.port = port
+        self.type = type
+        self.security = security
+        self.pbk = pbk
+        self.fp = fp
+        self.sni = sni
+        self.sid = sid
+        self.spx = spx
+        self.flow = flow
+
 class VPNService:
     def __init__(self):
         self.base_url = API_BASE_URL.rstrip('/')
@@ -14,6 +37,9 @@ class VPNService:
         
         # Создаем директорию для cookies если её нет
         os.makedirs(os.path.dirname(self.cookies_file), exist_ok=True)
+        
+        # Настройки для генерации URL
+        self.vpn_settings = VPNSettings()
         
     def _load_cookies(self):
         try:
@@ -34,9 +60,34 @@ class VPNService:
             for name, cookie in cookies_dict.items():
                 cookie_jar.update_cookies({name: cookie})
 
+    def generate_vpn_url(self, user_uuid, nickname):
+        """Генерирует URL для VPN-клиента"""
+        # URL-encode для специальных символов в spx
+        spx_encoded = self.vpn_settings.spx.replace("/", "%2F")
+        
+        # Формируем URL
+        url = (
+            f"vless://{user_uuid}@{self.vpn_settings.host}:{self.vpn_settings.port}"
+            f"?type={self.vpn_settings.type}"
+            f"&security={self.vpn_settings.security}"
+            f"&pbk={self.vpn_settings.pbk}"
+            f"&fp={self.vpn_settings.fp}"
+            f"&sni={self.vpn_settings.sni}"
+            f"&sid={self.vpn_settings.sid}"
+            f"&spx={spx_encoded}"
+            f"&flow={self.vpn_settings.flow}"
+            f"#{nickname}"
+        )
+        
+        return url
+    
+    def update_vpn_settings(self, settings):
+        """Обновляет настройки VPN"""
+        self.vpn_settings = settings
+
     # Только один метод для создания VPN
-    async def create_config(self, nickname: str, user_uuid: str) -> bool:
-        """Создает конфигурацию VPN на сервере"""
+    async def create_config(self, nickname: str, user_uuid: str) -> tuple[bool, str]:
+        """Создает конфигурацию VPN на сервере и возвращает URL"""
         cookie_jar = aiohttp.CookieJar(unsafe=True)
         saved_cookies = self._load_cookies()
         if saved_cookies:
@@ -95,4 +146,6 @@ class VPNService:
                     raise Exception(f"Ошибка при создании клиента: {client_response_text}")
                 print(f"✅ Пользователь {nickname} ({user_uuid}) успешно добавлен!")
             
-            return True 
+            # После успешного создания клиента генерируем URL
+            vpn_url = self.generate_vpn_url(user_uuid, nickname)
+            return True, vpn_url 
