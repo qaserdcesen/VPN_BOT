@@ -24,11 +24,20 @@ async def cmd_start(message: types.Message):
         reply_markup=keyboard
     )
 
+# Функция для форматирования информации о клиенте
+def format_client_info(client):
+    return (
+        f"UUID: {client.uuid}\n"
+        f"Nickname: {client.email}\n"
+        f"Limit IP: {client.limit_ip}\n"
+        f"Traffic: {client.total_traffic / (1024 * 1024 * 1024):.1f} GB"
+    )
+
 @router.callback_query(lambda c: c.data == "get_config")
 async def process_get_config(callback: types.CallbackQuery):
     try:
         async with async_session() as session:
-            # Проверяем существование пользователя
+            # Проверяем существование пользователя и его конфига в одной транзакции
             result = await session.execute(
                 select(User).where(User.tg_id == callback.from_user.id)
             )
@@ -53,11 +62,7 @@ async def process_get_config(callback: types.CallbackQuery):
             if existing_client:
                 # У пользователя уже есть конфиг
                 await callback.message.answer(
-                    "⚠️ У вас уже есть активный VPN конфиг!\n\n"
-                    f"UUID: {existing_client.uuid}\n"
-                    f"Nickname: {existing_client.email}\n"
-                    f"Limit IP: {existing_client.limit_ip}\n"
-                    f"Traffic: {existing_client.total_traffic / (1024 * 1024 * 1024):.1f} GB"
+                    f"⚠️ У вас уже есть активный VPN конфиг!\n\n{format_client_info(existing_client)}"
                 )
                 await callback.answer()
                 return
@@ -83,11 +88,7 @@ async def process_get_config(callback: types.CallbackQuery):
 
             # Отправляем сообщение об успехе
             await callback.message.answer(
-                f"✅ VPN создан успешно!\n\n"
-                f"UUID: {user_uuid}\n"
-                f"Nickname: {nickname}\n"
-                f"Limit IP: 3\n"
-                f"Traffic: 2 GB"
+                f"✅ VPN создан успешно!\n\n{format_client_info(client)}"
             )
     
     except Exception as e:

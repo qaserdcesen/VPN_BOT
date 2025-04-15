@@ -14,4 +14,4 @@ class Client(Base):
     is_active = Column(Boolean, default=True)
     tg_notified = Column(Boolean, default=False)
     reset = Column(Integer)
-    config_data = Column(Text, nullable=True)  # VPN конфигурация
+    config_data = Column(Text, nullable=True)  # Оставляем на будущее
