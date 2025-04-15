@@ -6,6 +6,8 @@ import logging
 from bot.config import BOT_TOKEN
 from bot.handlers.start import register_handlers
 from bot.utils.db import init_db
+from bot.utils.middlewares import ThrottlingMiddleware, BanCheckMiddleware, AntiFloodMiddleware
+from bot.services.ban_service import BanService
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
@@ -16,7 +18,22 @@ bot = Bot(
     token=BOT_TOKEN,
     default=DefaultBotProperties(parse_mode=ParseMode.HTML)
 )
+
+# Инициализация сервисов (после создания бота)
+ban_service = BanService(bot)  # Передаем экземпляр бота
+
 dp = Dispatcher()
+
+# Инициализация middleware
+throttling_middleware = ThrottlingMiddleware(rate_limit=2.0)
+
+# Добавляем middleware
+dp.message.middleware(throttling_middleware)  # Ограничение в 2 секунды
+dp.callback_query.middleware(ThrottlingMiddleware(rate_limit=1.0))  # Для callback_query
+dp.message.middleware(BanCheckMiddleware(ban_service))  # Проверка бана
+dp.callback_query.middleware(BanCheckMiddleware(ban_service))  # Для callback_query
+dp.message.middleware(AntiFloodMiddleware(ban_service))  # Защита от флуда для сообщений
+dp.callback_query.middleware(AntiFloodMiddleware(ban_service))  # Защита от флуда для кнопок
 
 # Регистрация обработчиков
 register_handlers(dp)
@@ -25,6 +42,9 @@ register_handlers(dp)
 async def main() -> None:
     logger.info("Инициализация базы данных...")
     await init_db()
+    
+    # Запускаем задачу очистки для ThrottlingMiddleware
+    await throttling_middleware.start_cleanup()
     
     logger.info("Запуск бота...")
     try:

@@ -1,5 +1,6 @@
 from sqlalchemy import Column, Integer, Text, Boolean, DateTime, BigInteger, ForeignKey
-from bot.utils.base import Base  # Импортируем Base из base.py
+from sqlalchemy.orm import relationship
+from bot.utils.db import Base  # Импортируем Base из base.py
 
 class Client(Base):
     __tablename__ = "clients"
@@ -15,3 +16,6 @@ class Client(Base):
     tg_notified = Column(Boolean, default=False)
     reset = Column(Integer)
     config_data = Column(Text, nullable=True)  # Оставляем на будущее
+    
+    # Добавляем отношение с пользователем
+    user = relationship("User", back_populates="clients")
