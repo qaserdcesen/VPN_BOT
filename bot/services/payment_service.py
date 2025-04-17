@@ -331,4 +331,183 @@ class PaymentService:
                 
         except Exception as e:
             logger.error(f"Ошибка при обработке платежа {payment_id}: {e}")
-            return False 
+            return False
+    
+    @staticmethod
+    async def process_notification(payment_data: dict):
+        """
+        Обрабатывает уведомление от YooKassa
+        
+        Args:
+            payment_data: Данные уведомления от YooKassa
+            
+        Returns:
+            bool: True если успешно обработано
+        """
+        try:
+            # Получаем событие и объект платежа из уведомления
+            event = payment_data.get("event")
+            payment = payment_data.get("object")
+            
+            if not event or not payment:
+                logger.warning("Некорректное уведомление: отсутствует event или object")
+                return False
+                
+            payment_id = payment.get("id")
+            status = payment.get("status")
+            paid = payment.get("paid", False)
+            
+            logger.info(f"Обработка уведомления: event={event}, payment_id={payment_id}, status={status}, paid={paid}")
+            
+            # Проверяем, что это уведомление о платеже и что платеж не в статусе pending
+            if "payment" not in event:
+                logger.warning(f"Неподдерживаемый тип события: {event}")
+                return False
+                
+            # Находим платеж в базе данных
+            async with async_session() as session:
+                payment_query = await session.execute(
+                    select(PaymentModel).where(PaymentModel.payment_id == payment_id)
+                )
+                db_payment = payment_query.scalar_one_or_none()
+                
+                if not db_payment:
+                    logger.warning(f"Платеж {payment_id} не найден в БД")
+                    return False
+                    
+                # Обновляем статус платежа
+                old_status = db_payment.status
+                db_payment.status = status
+                
+                # Если платеж успешно завершен, устанавливаем время оплаты
+                if status == "succeeded" and paid:
+                    db_payment.paid_at = datetime.now()
+                    logger.info(f"Платеж {payment_id} успешно оплачен. Статус изменен с {old_status} на {status}")
+                    
+                    # Дополнительно проверяем статус из API YooKassa для подтверждения
+                    if yookassa_configured:
+                        try:
+                            payment_info = Payment.find_one(payment_id)
+                            if payment_info and payment_info.status == "succeeded" and payment_info.paid:
+                                logger.info(f"Подтверждено через API: платеж {payment_id} в статусе succeeded и оплачен")
+                            else:
+                                logger.warning(f"Несоответствие данных: webhook={status}/{paid}, API={payment_info.status if payment_info else 'None'}/{payment_info.paid if payment_info else 'None'}")
+                        except Exception as e:
+                            logger.warning(f"Ошибка при проверке платежа через API: {e}")
+                else:
+                    logger.info(f"Статус платежа {payment_id} изменен с {old_status} на {status}, paid={paid}")
+                
+                await session.commit()
+                return True
+                
+        except Exception as e:
+            logger.error(f"Ошибка при обработке уведомления от YooKassa: {e}")
+            return False
+            
+    @staticmethod
+    async def check_payments(bot):
+        """
+        Проверяет статусы платежей через API YooKassa и обновляет их в БД
+        
+        Args:
+            bot: Экземпляр бота для отправки уведомлений
+        """
+        try:
+            if not yookassa_configured:
+                logger.warning("YooKassa не настроена, пропускаем проверку платежей")
+                return
+
+            logger.info("Начинаем проверку статусов платежей")
+            
+            # Находим платежи со статусом pending
+            async with async_session() as session:
+                payment_query = await session.execute(
+                    select(PaymentModel).where(PaymentModel.status == "pending")
+                )
+                pending_payments = payment_query.scalars().all()
+                
+                if not pending_payments:
+                    logger.info("Нет платежей в статусе pending")
+                    return
+                
+                logger.info(f"Найдено {len(pending_payments)} платежей в статусе pending")
+                
+                for db_payment in pending_payments:
+                    try:
+                        # Получаем информацию о платеже из YooKassa
+                        payment_info = Payment.find_one(db_payment.payment_id)
+                        
+                        if not payment_info:
+                            logger.warning(f"Платеж {db_payment.payment_id} не найден в YooKassa")
+                            continue
+                        
+                        logger.info(f"Платеж {db_payment.payment_id}: Статус в YooKassa - {payment_info.status}, Статус в БД - {db_payment.status}")
+                        
+                        # Если статус изменился, обновляем в БД
+                        if payment_info.status != db_payment.status:
+                            old_status = db_payment.status
+                            db_payment.status = payment_info.status
+                            
+                            # Если платеж успешно оплачен, устанавливаем время оплаты
+                            if payment_info.status == "succeeded" and payment_info.paid:
+                                db_payment.paid_at = datetime.now()
+                                logger.info(f"Платеж {db_payment.payment_id} успешно оплачен. Статус изменен с {old_status} на {payment_info.status}")
+                                
+                                # Получаем информацию о пользователе для уведомления
+                                user_query = await session.execute(
+                                    select(User).where(User.id == db_payment.user_id)
+                                )
+                                user = user_query.scalar_one_or_none()
+                                
+                                if user:
+                                    # Получаем информацию о плане
+                                    plan_query = await session.execute(
+                                        select(Plan).where(Plan.id == db_payment.plan_id)
+                                    )
+                                    plan = plan_query.scalar_one_or_none()
+                                    
+                                    plan_info = f"«{plan.title}»" if plan else ""
+                                    
+                                    # Отправляем уведомление пользователю
+                                    try:
+                                        await bot.send_message(
+                                            user.tg_id,
+                                            f"✅ Оплата успешно выполнена!\n\n"
+                                            f"Ваш тариф {plan_info} активирован.\n"
+                                            f"Сумма: {db_payment.amount} ₽"
+                                        )
+                                        logger.info(f"Отправлено уведомление пользователю {user.tg_id} об успешной оплате")
+                                    except Exception as e:
+                                        logger.error(f"Ошибка отправки уведомления пользователю {user.tg_id}: {e}")
+                            
+                            elif payment_info.status == "canceled":
+                                logger.info(f"Платеж {db_payment.payment_id} отменен. Статус изменен с {old_status} на {payment_info.status}")
+                            
+                            await session.commit()
+                    
+                    except Exception as e:
+                        logger.error(f"Ошибка при проверке платежа {db_payment.payment_id}: {e}")
+        
+        except Exception as e:
+            logger.error(f"Ошибка в процессе проверки платежей: {e}")
+            
+    @staticmethod
+    async def start_payment_checker(bot, check_interval=60):
+        """
+        Запускает периодическую проверку платежей
+        
+        Args:
+            bot: Экземпляр бота
+            check_interval: Интервал проверки в секундах (по умолчанию 60 секунд)
+        """
+        import asyncio
+        
+        logger.info(f"Запускаем периодическую проверку платежей каждые {check_interval} секунд")
+        
+        while True:
+            try:
+                await PaymentService.check_payments(bot)
+            except Exception as e:
+                logger.error(f"Ошибка в задаче проверки платежей: {e}")
+            
+            await asyncio.sleep(check_interval) 

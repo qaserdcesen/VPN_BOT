@@ -9,6 +9,7 @@ from bot.handlers.payment import register_payment_handlers
 from bot.utils.db import init_db
 from bot.utils.middlewares import ThrottlingMiddleware, BanCheckMiddleware, AntiFloodMiddleware
 from bot.services.ban_service import BanService
+from bot.services.payment_service import PaymentService
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
@@ -47,6 +48,10 @@ async def main() -> None:
     
     # Запускаем задачу очистки для ThrottlingMiddleware
     await throttling_middleware.start_cleanup()
+    
+    # Запускаем проверку платежей в фоновой задаче
+    asyncio.create_task(PaymentService.start_payment_checker(bot, check_interval=60))
+    logger.info("Запущена фоновая задача проверки платежей каждые 60 секунд")
     
     logger.info("Запуск бота...")
     try:
