@@ -5,6 +5,9 @@ import time
 import asyncio
 from collections import defaultdict
 import datetime
+import logging
+
+logger = logging.getLogger(__name__)
 
 class ThrottlingMiddleware(BaseMiddleware):
     def __init__(self, rate_limit=2.0):
@@ -81,28 +84,42 @@ class BanCheckMiddleware(BaseMiddleware):
         # Проверяем, забанен ли пользователь
         user_id = event.from_user.id
         
-        is_banned, reason, ban_until = await self.ban_service.is_banned(user_id)
-        
-        if is_banned:
-            # Формируем сообщение о бане
-            ban_msg = "❌ Вы временно заблокированы в боте"
-            if reason:
-                ban_msg += f" из-за: {reason}"
+        try:
+            # Пробуем получить расширенную информацию о бане
+            ban_result = await self.ban_service.is_banned(user_id)
             
-            if ban_until:
-                # Форматируем оставшееся время
-                time_left = ban_until - datetime.datetime.now()
-                minutes_left = max(1, int(time_left.total_seconds() / 60))
-                ban_msg += f"\nБлокировка будет снята через {minutes_left} мин."
-            
-            # Если пользователь забанен, игнорируем запрос
-            if isinstance(event, CallbackQuery):
-                await event.answer(ban_msg, show_alert=True)
-                return None
+            # Если результат - кортеж, распаковываем его
+            if isinstance(ban_result, tuple) and len(ban_result) == 3:
+                is_banned, reason, ban_until = ban_result
             else:
-                await event.answer(ban_msg)
-                return None
-        
+                # Если вернулся только флаг (старая версия)
+                is_banned = ban_result
+                reason = "нарушение правил"
+                ban_until = None
+                
+            if is_banned:
+                # Формируем сообщение о бане
+                ban_msg = "❌ Вы временно заблокированы в боте"
+                if reason:
+                    ban_msg += f" из-за: {reason}"
+                
+                if ban_until:
+                    # Форматируем оставшееся время
+                    time_left = ban_until - datetime.datetime.now()
+                    minutes_left = max(1, int(time_left.total_seconds() / 60))
+                    ban_msg += f"\nБлокировка будет снята через {minutes_left} мин."
+                
+                # Если пользователь забанен, игнорируем запрос
+                if isinstance(event, CallbackQuery):
+                    await event.answer(ban_msg, show_alert=True)
+                    return None
+                else:
+                    await event.answer(ban_msg)
+                    return None
+        except Exception as e:
+            # В случае ошибки, пропускаем запрос
+            logger.error(f"Ошибка при проверке бана: {e}")
+            
         # Если не забанен, пропускаем запрос
         return await handler(event, data)
 

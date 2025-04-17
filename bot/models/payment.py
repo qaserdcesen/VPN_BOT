@@ -8,7 +8,8 @@ class Payment(Base):
     id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     plan_id = Column(Integer, ForeignKey("plans.id"), nullable=False)
-    status = Column(Text)
+    status = Column(Text)  # pending, succeeded, canceled, waiting_for_capture
     amount = Column(Integer)
+    payment_id = Column(Text, nullable=False, unique=True)  # ID платежа в системе YooKassa
     created_at = Column(DateTime, default=datetime.utcnow)
     paid_at = Column(DateTime, nullable=True)  # Может быть None, если платеж не завершен

@@ -5,6 +5,7 @@ import asyncio
 import logging
 from bot.config import BOT_TOKEN
 from bot.handlers.start import register_handlers
+from bot.handlers.payment import register_payment_handlers
 from bot.utils.db import init_db
 from bot.utils.middlewares import ThrottlingMiddleware, BanCheckMiddleware, AntiFloodMiddleware
 from bot.services.ban_service import BanService
@@ -19,7 +20,7 @@ bot = Bot(
     default=DefaultBotProperties(parse_mode=ParseMode.HTML)
 )
 
-# Инициализация сервисов (после создания бота)
+# Инициализация сервисов
 ban_service = BanService(bot)  # Передаем экземпляр бота
 
 dp = Dispatcher()
@@ -37,6 +38,7 @@ dp.callback_query.middleware(AntiFloodMiddleware(ban_service))  # Защита �
 
 # Регистрация обработчиков
 register_handlers(dp)
+register_payment_handlers(dp)
 
 # Функция запуска бота
 async def main() -> None:

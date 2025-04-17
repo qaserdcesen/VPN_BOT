@@ -123,27 +123,6 @@ async def show_subscription_info(message: types.Message):
         reply_markup=get_tariffs_keyboard()
     )
 
-@router.callback_query(lambda c: c.data.startswith("tariff_"))
-async def process_tariff_selection(callback: types.CallbackQuery):
-    # Получаем выбранный тариф
-    tariff_key = callback.data.replace("tariff_", "")
-    tariff = TARIFFS.get(tariff_key)
-    
-    if not tariff:
-        await callback.answer("Тариф не найден")
-        return
-    
-    # Отправляем сообщение с выбранным тарифом и кнопками оплаты
-    await callback.message.edit_text(
-        f"Выбран тариф: {tariff['name']}\n"
-        f"Стоимость: {tariff['price']}₽/месяц\n"
-        f"Трафик: {tariff['traffic']}\n"
-        f"Количество IP: {tariff['ips']}\n\n"
-        f"Выберете тип оплаты:",
-        reply_markup=get_payment_keyboard()
-    )
-    await callback.answer()
-
 @router.callback_query(lambda c: c.data == "pay_bonus")
 async def process_bonus_payment(callback: types.CallbackQuery):
     await callback.message.edit_text(
@@ -155,12 +134,11 @@ async def process_bonus_payment(callback: types.CallbackQuery):
 
 @router.callback_query(lambda c: c.data == "pay_card")
 async def process_card_payment(callback: types.CallbackQuery):
+    # Отображаем список тарифов
     await callback.message.edit_text(
-        "Вы выбрали оплату банковской картой/СБП/SbaerPay.\n"
-        "Перенаправляем на страницу оплаты..."
+        get_tariffs_info(),
+        reply_markup=get_tariffs_keyboard()
     )
-    # Здесь будет логика перенаправления на платежный шлюз
-    # ...
     await callback.answer()
 
 # Обработчик для кнопки "Назад" при выборе способа оплаты
