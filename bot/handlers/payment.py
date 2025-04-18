@@ -9,6 +9,7 @@ from sqlalchemy import select
 from bot.models.user import User
 from bot.utils.db import async_session
 from bot.services.payment_service import DEFAULT_EMAIL
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 router = Router()
 logger = logging.getLogger(__name__)
@@ -119,7 +120,8 @@ async def create_payment_with_email(callback_or_message, state, email):
         payment_id, payment_url, markup = await PaymentService.create_payment(
             user_id=user_id,
             tariff_key=tariff_key,
-            contact=email
+            contact=email,
+            bot=callback_or_message.bot
         )
         
         if payment_id and payment_url and markup:
@@ -276,6 +278,13 @@ async def process_test_success(callback: types.CallbackQuery):
     payment_id = callback.data.replace("test_success_", "")
     
     try:
+        # Показываем пользователю временное сообщение о проверке
+        await callback.message.edit_text(
+            "⏳ Обрабатываем тестовую оплату...",
+            reply_markup=None
+        )
+        
+        # Обрабатываем тестовый платеж
         success = await PaymentService.process_test_payment(payment_id)
         
         if success:
@@ -288,6 +297,11 @@ async def process_test_success(callback: types.CallbackQuery):
             logger.info(f"Тестовый платеж {payment_id} успешно завершен пользователем {callback.from_user.id}")
         else:
             await callback.answer("Ошибка при обработке тестовой оплаты", show_alert=True)
+            await callback.message.edit_text(
+                "❌ Произошла ошибка при обработке платежа.\n\n"
+                "Пожалуйста, попробуйте позже.",
+                reply_markup=get_tariffs_keyboard()
+            )
     except Exception as e:
         logger.error(f"Ошибка при обработке тестового платежа {payment_id}: {e}")
         await callback.answer("Произошла ошибка, попробуйте позже", show_alert=True)

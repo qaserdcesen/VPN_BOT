@@ -49,9 +49,9 @@ async def main() -> None:
     # Запускаем задачу очистки для ThrottlingMiddleware
     await throttling_middleware.start_cleanup()
     
-    # Запускаем проверку платежей в фоновой задаче
-    asyncio.create_task(PaymentService.start_payment_checker(bot, check_interval=60))
-    logger.info("Запущена фоновая задача проверки платежей каждые 60 секунд")
+    # Запускаем задачу проверки платежей в фоновом режиме
+    asyncio.create_task(PaymentService.start_payment_checker(bot, check_interval=10))
+    logger.info("Запущена проверка платежей каждые 10 секунд")
     
     logger.info("Запуск бота...")
     try:

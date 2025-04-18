@@ -236,14 +236,16 @@ class VPNService:
 
                 update_client_url = f"{self.base_url}/panel/api/inbounds/updateClient/{user_uuid}"
                 logger.info(f"Отправляем запрос на обновление клиента {nickname} ({user_uuid})")
-                logger.debug(f"Данные для обновления: {client_data}")
+                logger.info(f"Данные для обновления: {client_data}")
+                logger.info(f"URL запроса: {update_client_url}")
                 
                 async with session.post(update_client_url, headers=headers, json=client_data) as response:
                     client_response_text = await response.text()
                     logger.info(f"Статус-код при обновлении: {response.status}")
-                    logger.debug(f"Ответ сервера: {client_response_text}")
+                    logger.info(f"Ответ сервера: {client_response_text}")
                     
                     if response.status != 200:
+                        logger.error(f"Ошибка при обновлении клиента: {client_response_text}")
                         raise Exception(f"Ошибка при обновлении клиента: {client_response_text}")
                     
                     logger.info(f"Клиент {nickname} ({user_uuid}) успешно обновлен!")

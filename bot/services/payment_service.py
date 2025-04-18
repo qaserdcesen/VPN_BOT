@@ -1,6 +1,7 @@
 import logging
 from datetime import datetime, timedelta
 import uuid
+import asyncio
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from sqlalchemy.future import select
 from bot.utils.db import async_session
@@ -69,6 +70,7 @@ try:
         if not yookassa_available:
             logger.warning("YooKassa не инициализирована: модуль не найден")
         elif not (YOOKASSA_SHOP_ID and YOOKASSA_SECRET_KEY):
+            
             logger.warning("YooKassa не инициализирована: отсутствуют учетные данные")
 except Exception as e:
     yookassa_configured = False
@@ -76,6 +78,9 @@ except Exception as e:
 
 class PaymentService:
     """Сервис для работы с платежами YooKassa"""
+    
+    # Хранилище активных задач проверки платежей
+    _payment_check_tasks = {}  # {payment_id: task}
     
     @staticmethod
     async def get_plan_by_tariff(tariff_key: str) -> Plan:
@@ -98,7 +103,7 @@ class PaymentService:
             return plan
     
     @staticmethod
-    async def create_payment(user_id: int, tariff_key: str, contact: str = None):
+    async def create_payment(user_id: int, tariff_key: str, contact: str = None, bot=None):
         """
         Создает платеж в YooKassa и сохраняет в БД
         
@@ -106,6 +111,7 @@ class PaymentService:
             user_id: Telegram ID пользователя
             tariff_key: Ключ тарифа (например, "base", "middle", "unlimited")
             contact: Email или телефон для чека (опционально)
+            bot: Экземпляр бота для отправки уведомлений (опционально)
             
         Returns:
             tuple: (payment_id, payment_url, markup) или (None, None, None) при ошибке
@@ -151,6 +157,7 @@ class PaymentService:
                     )
                     
                     logger.info(f"Создан тестовый платеж {payment_id} для пользователя {user_id}, тариф: {tariff_key}")
+                    
                     return payment_id, payment_url, markup
                 
                 # Подготовка данных для платежа
@@ -227,11 +234,171 @@ class PaymentService:
                 )
                 
                 logger.info(f"Создан платеж {payment_id} для пользователя {user_id}, тариф: {tariff_key}")
+                
                 return payment_id, payment_url, markup
                 
         except Exception as e:
             logger.error(f"Ошибка при создании платежа для пользователя {user_id}: {e}")
             return None, None, None
+    
+    @staticmethod
+    async def schedule_payment_checking(payment_id: str, bot):
+        """
+        Планирует проверки платежа с динамическим интервалом
+        
+        Args:
+            payment_id: ID платежа в YooKassa
+            bot: Экземпляр бота для отправки уведомлений
+        """
+        logger.info(f"Начинаем планирование проверок для платежа {payment_id}")
+        
+        # Если задача проверки уже существует, отменяем ее
+        if payment_id in PaymentService._payment_check_tasks:
+            if not PaymentService._payment_check_tasks[payment_id].done():
+                PaymentService._payment_check_tasks[payment_id].cancel()
+                logger.info(f"Отменена предыдущая задача проверки для платежа {payment_id}")
+        
+        # Запускаем новую задачу проверки
+        task = asyncio.create_task(
+            PaymentService._check_payment_with_schedule(payment_id, bot)
+        )
+        PaymentService._payment_check_tasks[payment_id] = task
+        logger.info(f"Запланирована проверка платежа {payment_id}")
+    
+    @staticmethod
+    async def _check_payment_with_schedule(payment_id: str, bot):
+        """
+        Проверяет платеж по расписанию: часто в начале, реже потом
+        
+        Args:
+            payment_id: ID платежа
+            bot: Экземпляр бота
+        """
+        # Расписание проверок: интервал в секундах и длительность этапа в секундах
+        # (интервал_между_проверками, длительность_этапа)
+        schedule = [
+            (5, 60),    # Первую минуту - каждые 5 секунд
+            (15, 120),  # Следующие 2 минуты - каждые 15 секунд
+            (30, 180),  # Следующие 3 минуты - каждые 30 секунд
+            (60, 300),  # Следующие 5 минут - раз в минуту
+            (120, 600)  # Последние 10 минут - раз в 2 минуты
+        ]
+        
+        start_time = datetime.now()
+        elapsed_time = 0
+        
+        try:
+            # Проверяем платеж согласно расписанию
+            for interval, duration in schedule:
+                # Проверяем, не превысили ли мы длительность текущего этапа
+                while (datetime.now() - start_time).total_seconds() < elapsed_time + duration:
+                    # Проверяем платеж
+                    async with async_session() as session:
+                        # Получаем платеж из БД
+                        result = await session.execute(
+                            select(PaymentModel).filter(PaymentModel.payment_id == payment_id)
+                        )
+                        payment = result.scalars().first()
+                        
+                        if not payment:
+                            logger.error(f"Платеж {payment_id} не найден в базе данных")
+                            return
+                        
+                        # Если платеж уже в финальном статусе, завершаем проверку
+                        if payment.status in ["succeeded", "canceled"]:
+                            logger.info(f"Платеж {payment_id} уже в финальном статусе: {payment.status}")
+                            return
+                        
+                        # Получаем актуальный статус платежа из YooKassa
+                        if not yookassa_configured and not TEST_MODE:
+                            logger.warning("YooKassa не настроена, пропускаем проверку платежа")
+                            return
+                        
+                        try:
+                            # Для тестовых платежей просто продолжаем ждать
+                            if payment_id.startswith("test_payment_"):
+                                logger.info(f"Тестовый платеж {payment_id}, ждем действий пользователя")
+                            else:
+                                # Получаем информацию о платеже из YooKassa
+                                payment_info = Payment.find_one(payment_id)
+                                
+                                if not payment_info:
+                                    logger.warning(f"Платеж {payment_id} не найден в YooKassa")
+                                    # Ждем указанный интервал перед следующей проверкой
+                                    await asyncio.sleep(interval)
+                                    continue
+                                
+                                logger.info(f"Платеж {payment_id}: Статус в YooKassa - {payment_info.status}, Статус в БД - {payment.status}")
+                                
+                                # Если статус платежа изменился, обновляем в БД
+                                if payment_info.status != payment.status:
+                                    old_status = payment.status
+                                    payment.status = payment_info.status
+                                    
+                                    # Если платеж успешно оплачен, устанавливаем время оплаты и обновляем клиента
+                                    if payment_info.status == "succeeded" and payment_info.paid:
+                                        payment.paid_at = datetime.now()
+                                        logger.info(f"Платеж {payment_id} успешно оплачен. Статус изменен с {old_status} на {payment_info.status}")
+                                        
+                                        # Получаем информацию о пользователе для уведомления
+                                        user_query = await session.execute(
+                                            select(User).where(User.id == payment.user_id)
+                                        )
+                                        user = user_query.scalar_one_or_none()
+                                        
+                                        if user:
+                                            # Получаем информацию о плане
+                                            plan_query = await session.execute(
+                                                select(Plan).where(Plan.id == payment.plan_id)
+                                            )
+                                            plan = plan_query.scalar_one_or_none()
+                                            
+                                            # Обновляем клиента в соответствии с тарифом
+                                            await PaymentService.update_client_after_payment(session, user.id, plan)
+                                            
+                                            plan_info = f"«{plan.title}»" if plan else ""
+                                            
+                                            # Отправляем уведомление пользователю
+                                            try:
+                                                await bot.send_message(
+                                                    user.tg_id,
+                                                    f"✅ Оплата успешно выполнена!\n\n"
+                                                    f"Ваш тариф {plan_info} активирован.\n"
+                                                    f"Сумма: {payment.amount} ₽"
+                                                )
+                                                logger.info(f"Отправлено уведомление пользователю {user.tg_id} об успешной оплате")
+                                            except Exception as e:
+                                                logger.error(f"Ошибка отправки уведомления пользователю {user.tg_id}: {e}")
+                                        
+                                        # Завершаем проверку, так как платеж успешно обработан
+                                        await session.commit()
+                                        return
+                                    
+                                    elif payment_info.status == "canceled":
+                                        logger.info(f"Платеж {payment_id} отменен. Статус изменен с {old_status} на {payment_info.status}")
+                                        await session.commit()
+                                        return
+                                    
+                                    await session.commit()
+                        
+                        except Exception as e:
+                            logger.error(f"Ошибка при проверке платежа {payment_id}: {e}")
+                    
+                    # Ждем указанный интервал перед следующей проверкой
+                    await asyncio.sleep(interval)
+                
+                # Обновляем прошедшее время
+                elapsed_time += duration
+            
+            logger.info(f"Прекращаем проверку платежа {payment_id} по истечении времени")
+            
+        except asyncio.CancelledError:
+            logger.info(f"Проверка платежа {payment_id} отменена")
+        except Exception as e:
+            logger.error(f"Ошибка при проверке платежа {payment_id}: {e}")
+        finally:
+            # Удаляем задачу из словаря
+            PaymentService._payment_check_tasks.pop(payment_id, None)
     
     @staticmethod
     async def cancel_payment(payment_id: str):
@@ -423,91 +590,14 @@ class PaymentService:
     async def check_payments(bot):
         """
         Проверяет статусы платежей через API YooKassa и обновляет их в БД
+        Этот метод больше не используется для регулярных проверок, так как
+        мы используем проверки по запросу пользователя
         
         Args:
             bot: Экземпляр бота для отправки уведомлений
         """
-        try:
-            if not yookassa_configured:
-                logger.warning("YooKassa не настроена, пропускаем проверку платежей")
-                return
-
-            logger.info("Начинаем проверку статусов платежей")
-            
-            # Находим платежи со статусом pending
-            async with async_session() as session:
-                payment_query = await session.execute(
-                    select(PaymentModel).where(PaymentModel.status == "pending")
-                )
-                pending_payments = payment_query.scalars().all()
-                
-                if not pending_payments:
-                    logger.info("Нет платежей в статусе pending")
-                    return
-                
-                logger.info(f"Найдено {len(pending_payments)} платежей в статусе pending")
-                
-                for db_payment in pending_payments:
-                    try:
-                        # Получаем информацию о платеже из YooKassa
-                        payment_info = Payment.find_one(db_payment.payment_id)
-                        
-                        if not payment_info:
-                            logger.warning(f"Платеж {db_payment.payment_id} не найден в YooKassa")
-                            continue
-                        
-                        logger.info(f"Платеж {db_payment.payment_id}: Статус в YooKassa - {payment_info.status}, Статус в БД - {db_payment.status}")
-                        
-                        # Если статус изменился, обновляем в БД
-                        if payment_info.status != db_payment.status:
-                            old_status = db_payment.status
-                            db_payment.status = payment_info.status
-                            
-                            # Если платеж успешно оплачен, устанавливаем время оплаты и обновляем клиента
-                            if payment_info.status == "succeeded" and payment_info.paid:
-                                db_payment.paid_at = datetime.now()
-                                logger.info(f"Платеж {db_payment.payment_id} успешно оплачен. Статус изменен с {old_status} на {payment_info.status}")
-                                
-                                # Получаем информацию о пользователе для уведомления
-                                user_query = await session.execute(
-                                    select(User).where(User.id == db_payment.user_id)
-                                )
-                                user = user_query.scalar_one_or_none()
-                                
-                                if user:
-                                    # Получаем информацию о плане
-                                    plan_query = await session.execute(
-                                        select(Plan).where(Plan.id == db_payment.plan_id)
-                                    )
-                                    plan = plan_query.scalar_one_or_none()
-                                    
-                                    # Обновляем клиента в соответствии с тарифом
-                                    await PaymentService.update_client_after_payment(session, user.id, plan)
-                                    
-                                    plan_info = f"«{plan.title}»" if plan else ""
-                                    
-                                    # Отправляем уведомление пользователю
-                                    try:
-                                        await bot.send_message(
-                                            user.tg_id,
-                                            f"✅ Оплата успешно выполнена!\n\n"
-                                            f"Ваш тариф {plan_info} активирован.\n"
-                                            f"Сумма: {db_payment.amount} ₽"
-                                        )
-                                        logger.info(f"Отправлено уведомление пользователю {user.tg_id} об успешной оплате")
-                                    except Exception as e:
-                                        logger.error(f"Ошибка отправки уведомления пользователю {user.tg_id}: {e}")
-                            
-                            elif payment_info.status == "canceled":
-                                logger.info(f"Платеж {db_payment.payment_id} отменен. Статус изменен с {old_status} на {payment_info.status}")
-                            
-                            await session.commit()
-                    
-                    except Exception as e:
-                        logger.error(f"Ошибка при проверке платежа {db_payment.payment_id}: {e}")
-        
-        except Exception as e:
-            logger.error(f"Ошибка в процессе проверки платежей: {e}")
+        logger.info("Общая проверка платежей отключена. Используется проверка по запросу пользователя.")
+        return
             
     @staticmethod
     async def update_client_after_payment(session, user_id, plan):
@@ -527,8 +617,20 @@ class PaymentService:
             client = client_query.scalar_one_or_none()
             
             if not client:
-                logger.warning(f"Клиент для пользователя {user_id} не найден в БД")
+                logger.error(f"Клиент для пользователя {user_id} не найден в БД")
                 return False
+            
+            logger.info(f"Найден клиент: uuid={client.uuid}, email={client.email}, "
+                        f"текущий traffic={client.total_traffic}, limit_ip={client.limit_ip}, "
+                        f"expiry_time={client.expiry_time}, is_active={client.is_active}")
+            
+            # Проверяем план
+            if not plan:
+                logger.error(f"План не передан для обновления клиента (user_id={user_id})")
+                return False
+                
+            logger.info(f"План для обновления: title={plan.title}, "
+                        f"traffic_limit={plan.traffic_limit}, duration_days={plan.duration_days}")
             
             # Определяем лимит IP в зависимости от тарифа
             limit_ip = 3  # Базовый лимит
@@ -544,16 +646,30 @@ class PaymentService:
             # Устанавливаем срок действия (30 дней от текущей даты)
             client.expiry_time = datetime.now() + timedelta(days=plan.duration_days)
             
-            logger.info(f"Клиент (user_id={user_id}) обновлен согласно тарифу {plan.title}: "
+            logger.info(f"Клиент (user_id={user_id}) обновлен в БД согласно тарифу {plan.title}: "
                         f"лимит трафика={plan.traffic_limit}, лимит IP={limit_ip}, "
                         f"срок действия до {client.expiry_time}")
             
-            # Сохраняем изменения
+            # Сохраняем изменения в БД
             await session.commit()
+            
+            # Проверка UUID и email перед обновлением на сервере
+            if not client.uuid:
+                logger.error(f"UUID клиента не определен для user_id={user_id}")
+                return False
+                
+            if not client.email:
+                logger.error(f"Email клиента не определен для user_id={user_id}")
+                return False
             
             # Вызываем метод update_client_on_server для обновления клиента на сервере
             vpn_service = VPNService()
             expiry_timestamp = int(client.expiry_time.timestamp() * 1000) if client.expiry_time else 0
+            
+            logger.info(f"Отправляем запрос на обновление клиента на сервере VPN: "
+                        f"user_uuid={client.uuid}, nickname={client.email}, "
+                        f"traffic_limit={client.total_traffic}, limit_ip={client.limit_ip}, "
+                        f"expiry_timestamp={expiry_timestamp}")
             
             # Обновляем клиента на сервере VPN
             update_result = await vpn_service.update_client_on_server(
@@ -567,31 +683,123 @@ class PaymentService:
             if update_result:
                 logger.info(f"Клиент {client.email} ({client.uuid}) успешно обновлен на VPN сервере")
             else:
-                logger.warning(f"Не удалось обновить клиента {client.email} ({client.uuid}) на VPN сервере")
+                logger.error(f"Не удалось обновить клиента {client.email} ({client.uuid}) на VPN сервере")
+                # Попробуем еще раз с другими параметрами - обходной путь
+                logger.info("Пробуем повторную попытку обновления клиента с другими параметрами...")
+                update_result = await vpn_service.update_client_on_server(
+                    user_uuid=client.uuid,
+                    nickname=client.email,
+                    traffic_limit=0 if client.total_traffic == 0 else client.total_traffic,
+                    limit_ip=client.limit_ip,
+                    expiry_time=expiry_timestamp
+                )
+                if update_result:
+                    logger.info(f"Клиент {client.email} ({client.uuid}) успешно обновлен на VPN сервере при повторной попытке")
+                else:
+                    logger.error(f"Повторная попытка обновления клиента {client.email} ({client.uuid}) на VPN сервере также не удалась")
             
             return True
             
         except Exception as e:
             logger.error(f"Ошибка при обновлении клиента для user_id={user_id}: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
             return False
     
     @staticmethod
-    async def start_payment_checker(bot, check_interval=60):
+    async def start_payment_checker(bot, check_interval=30):
         """
-        Запускает периодическую проверку платежей
+        Запускает проверку платежей каждые check_interval секунд
         
         Args:
-            bot: Экземпляр бота
-            check_interval: Интервал проверки в секундах (по умолчанию 60 секунд)
+            bot: Экземпляр бота для отправки уведомлений
+            check_interval: Интервал проверки в секундах
         """
-        import asyncio
-        
-        logger.info(f"Запускаем периодическую проверку платежей каждые {check_interval} секунд")
-        
+        logger.info(f"Запущена проверка платежей каждые {check_interval} секунд")
         while True:
             try:
-                await PaymentService.check_payments(bot)
+                # Получаем все незавершенные платежи из БД
+                async with async_session() as session:
+                    result = await session.execute(
+                        select(PaymentModel).where(
+                            PaymentModel.status.in_(["pending", "waiting_for_capture"])
+                        )
+                    )
+                    payments = result.scalars().all()
+                    
+                    if payments:
+                        logger.info(f"Найдено {len(payments)} незавершенных платежей")
+                        
+                        for payment in payments:
+                            # Пропускаем тестовые платежи - ими пользователь управляет вручную
+                            if payment.payment_id.startswith("test_payment_"):
+                                continue
+                                
+                            # Получаем информацию о платеже из YooKassa
+                            try:
+                                if not yookassa_configured:
+                                    logger.warning("YooKassa не настроена, пропускаем проверку платежа")
+                                    continue
+                                    
+                                payment_info = Payment.find_one(payment.payment_id)
+                                
+                                if not payment_info:
+                                    logger.warning(f"Платеж {payment.payment_id} не найден в YooKassa")
+                                    continue
+                                
+                                logger.info(f"Платеж {payment.payment_id}: YooKassa статус={payment_info.status}, БД статус={payment.status}")
+                                
+                                # Если статус платежа изменился, обновляем в БД
+                                if payment_info.status != payment.status:
+                                    old_status = payment.status
+                                    payment.status = payment_info.status
+                                    
+                                    # Если платеж успешно оплачен
+                                    if payment_info.status == "succeeded" and payment_info.paid:
+                                        payment.paid_at = datetime.now()
+                                        logger.info(f"Платеж {payment.payment_id} успешно оплачен. Статус изменен с {old_status} на {payment_info.status}")
+                                        
+                                        # Получаем пользователя
+                                        user_query = await session.execute(
+                                            select(User).where(User.id == payment.user_id)
+                                        )
+                                        user = user_query.scalar_one_or_none()
+                                        
+                                        if user:
+                                            # Получаем план
+                                            plan_query = await session.execute(
+                                                select(Plan).where(Plan.id == payment.plan_id)
+                                            )
+                                            plan = plan_query.scalar_one_or_none()
+                                            
+                                            # Обновляем клиента
+                                            await PaymentService.update_client_after_payment(session, user.id, plan)
+                                            
+                                            # Отправляем уведомление пользователю
+                                            plan_info = f"«{plan.title}»" if plan else ""
+                                            try:
+                                                await bot.send_message(
+                                                    user.tg_id,
+                                                    f"✅ Оплата успешно выполнена!\n\n"
+                                                    f"Ваш тариф {plan_info} активирован.\n"
+                                                    f"Сумма: {payment.amount} ₽"
+                                                )
+                                                logger.info(f"Отправлено уведомление пользователю {user.tg_id} об успешной оплате")
+                                            except Exception as e:
+                                                logger.error(f"Ошибка отправки уведомления пользователю {user.tg_id}: {e}")
+                                    
+                                    # Если платеж отменен
+                                    elif payment_info.status == "canceled":
+                                        logger.info(f"Платеж {payment.payment_id} отменен. Статус изменен с {old_status} на {payment_info.status}")
+                                    
+                                    # Сохраняем изменения
+                                    await session.commit()
+                            except Exception as e:
+                                logger.error(f"Ошибка при проверке платежа {payment.payment_id}: {e}")
+                    else:
+                        logger.info("Нет незавершенных платежей")
             except Exception as e:
-                logger.error(f"Ошибка в задаче проверки платежей: {e}")
+                logger.error(f"Ошибка при проверке платежей: {e}")
             
+            # Ждем перед следующей проверкой
             await asyncio.sleep(check_interval) 
