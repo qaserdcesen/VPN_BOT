@@ -1,5 +1,5 @@
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 import uuid
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from sqlalchemy.future import select
@@ -7,6 +7,7 @@ from bot.utils.db import async_session
 from bot.models.payment import Payment as PaymentModel
 from bot.models.user import User
 from bot.models.plan import Plan
+from bot.models.client import Client
 from bot.config import YOOKASSA_SHOP_ID, YOOKASSA_SECRET_KEY, PAYMENT_RETURN_URL
 from bot.keyboards.subscription_kb import TARIFFS
 
@@ -83,29 +84,15 @@ class PaymentService:
             if not tariff_info:
                 raise ValueError(f"Тариф {tariff_key} не найден")
             
-            # Находим или создаем план в БД
+            # Находим план в БД
             plan_query = await session.execute(
                 select(Plan).where(Plan.title == tariff_info["name"])
             )
             plan = plan_query.scalar_one_or_none()
             
             if not plan:
-                # Если план не существует, создаем его
-                traffic_limit = 0
-                if "ГБ" in tariff_info["traffic"]:
-                    # Например "25ГБ/месяц" -> 25 * 1024*1024*1024
-                    gb_value = int(tariff_info["traffic"].split("ГБ")[0])
-                    traffic_limit = gb_value * 1024 * 1024 * 1024
-                
-                plan = Plan(
-                    title=tariff_info["name"],
-                    traffic_limit=traffic_limit if traffic_limit > 0 else -1,  # -1 для безлимита
-                    duration_days=30,  # 30 дней по умолчанию
-                    price=tariff_info["price"]
-                )
-                session.add(plan)
-                await session.commit()
-                await session.refresh(plan)
+                logger.warning(f"План для тарифа {tariff_key} ({tariff_info['name']}) не найден в БД")
+                raise ValueError(f"План для тарифа {tariff_key} не найден в базе данных")
             
             return plan
     
@@ -322,15 +309,30 @@ class PaymentService:
                     logger.warning(f"Платеж {payment_id} не найден в БД")
                     return False
                 
+                # Устанавливаем статус succeeded и время оплаты
+                old_status = db_payment.status
                 db_payment.status = "succeeded"
                 db_payment.paid_at = datetime.now()
+                
+                # Получаем информацию о плане для обновления клиента
+                plan_query = await session.execute(
+                    select(Plan).where(Plan.id == db_payment.plan_id)
+                )
+                plan = plan_query.scalar_one_or_none()
+                
+                if plan:
+                    # Обновляем клиента в соответствии с тарифом
+                    await PaymentService.update_client_after_payment(session, db_payment.user_id, plan)
+                else:
+                    logger.warning(f"План не найден для платежа {payment_id}")
+                
                 await session.commit()
                 
-                logger.info(f"Платеж {payment_id} успешно обработан")
+                logger.info(f"Тестовый платеж {payment_id} успешно обработан: статус изменен с {old_status} на succeeded")
                 return True
                 
         except Exception as e:
-            logger.error(f"Ошибка при обработке платежа {payment_id}: {e}")
+            logger.error(f"Ошибка при обработке тестового платежа {payment_id}: {e}")
             return False
     
     @staticmethod
@@ -383,6 +385,18 @@ class PaymentService:
                 if status == "succeeded" and paid:
                     db_payment.paid_at = datetime.now()
                     logger.info(f"Платеж {payment_id} успешно оплачен. Статус изменен с {old_status} на {status}")
+                    
+                    # Получаем информацию о плане для обновления клиента
+                    plan_query = await session.execute(
+                        select(Plan).where(Plan.id == db_payment.plan_id)
+                    )
+                    plan = plan_query.scalar_one_or_none()
+                    
+                    if plan:
+                        # Обновляем клиента в соответствии с тарифом
+                        await PaymentService.update_client_after_payment(session, db_payment.user_id, plan)
+                    else:
+                        logger.warning(f"План не найден для платежа {payment_id}")
                     
                     # Дополнительно проверяем статус из API YooKassa для подтверждения
                     if yookassa_configured:
@@ -448,7 +462,7 @@ class PaymentService:
                             old_status = db_payment.status
                             db_payment.status = payment_info.status
                             
-                            # Если платеж успешно оплачен, устанавливаем время оплаты
+                            # Если платеж успешно оплачен, устанавливаем время оплаты и обновляем клиента
                             if payment_info.status == "succeeded" and payment_info.paid:
                                 db_payment.paid_at = datetime.now()
                                 logger.info(f"Платеж {db_payment.payment_id} успешно оплачен. Статус изменен с {old_status} на {payment_info.status}")
@@ -465,6 +479,9 @@ class PaymentService:
                                         select(Plan).where(Plan.id == db_payment.plan_id)
                                     )
                                     plan = plan_query.scalar_one_or_none()
+                                    
+                                    # Обновляем клиента в соответствии с тарифом
+                                    await PaymentService.update_client_after_payment(session, user.id, plan)
                                     
                                     plan_info = f"«{plan.title}»" if plan else ""
                                     
@@ -491,6 +508,53 @@ class PaymentService:
         except Exception as e:
             logger.error(f"Ошибка в процессе проверки платежей: {e}")
             
+    @staticmethod
+    async def update_client_after_payment(session, user_id, plan):
+        """
+        Обновляет информацию о клиенте после успешной оплаты
+        
+        Args:
+            session: Активная сессия SQLAlchemy
+            user_id: ID пользователя в БД
+            plan: Объект плана с информацией о тарифе
+        """
+        try:
+            # Находим клиента пользователя
+            client_query = await session.execute(
+                select(Client).where(Client.user_id == user_id)
+            )
+            client = client_query.scalar_one_or_none()
+            
+            if not client:
+                logger.warning(f"Клиент для пользователя {user_id} не найден в БД")
+                return False
+            
+            # Определяем лимит IP в зависимости от тарифа
+            limit_ip = 3  # Базовый лимит
+            
+            if "unlimited" in plan.title.lower():
+                limit_ip = 6  # Для безлимитного тарифа 6 IP
+            
+            # Обновляем информацию о клиенте
+            client.total_traffic = plan.traffic_limit  # Устанавливаем лимит трафика из плана
+            client.limit_ip = limit_ip  # Обновляем лимит IP
+            client.is_active = True  # Активируем клиента
+            
+            # Устанавливаем срок действия (30 дней от текущей даты)
+            client.expiry_time = datetime.now() + timedelta(days=plan.duration_days)
+            
+            logger.info(f"Клиент (user_id={user_id}) обновлен согласно тарифу {plan.title}: "
+                        f"лимит трафика={plan.traffic_limit}, лимит IP={limit_ip}, "
+                        f"срок действия до {client.expiry_time}")
+            
+            # Сохраняем изменения
+            await session.commit()
+            return True
+            
+        except Exception as e:
+            logger.error(f"Ошибка при обновлении клиента для user_id={user_id}: {e}")
+            return False
+    
     @staticmethod
     async def start_payment_checker(bot, check_interval=60):
         """

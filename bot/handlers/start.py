@@ -29,11 +29,17 @@ async def cmd_start(message: types.Message):
 
 # Функция для форматирования информации о клиенте
 def format_client_info(client):
+    # Формирование строки лимита трафика
+    if client.total_traffic == 0:
+        traffic_info = "Безлимит"
+    else:
+        traffic_info = f"{client.total_traffic / (1024 * 1024 * 1024):.1f} GB"
+    
     return (
         f"UUID: {client.uuid}\n"
         f"Nickname: {client.email}\n"
         f"Limit IP: {client.limit_ip}\n"
-        f"Traffic: {client.total_traffic / (1024 * 1024 * 1024):.1f} GB"
+        f"Traffic: {traffic_info}"
     )
 
 @router.callback_query(lambda c: c.data == "get_config")
@@ -74,16 +80,25 @@ async def process_get_config(callback: types.CallbackQuery):
             user_uuid = str(uuid.uuid4())
             nickname = f"user_{callback.from_user.id}"
             
+            # Устанавливаем начальные лимиты для бесплатного тарифа
+            limit_ip = 3
+            traffic_limit = 2 * 1024 * 1024 * 1024  # 2 ГБ по умолчанию
+            
             # Создаем конфиг на сервере и получаем URL
-            success, vpn_url = await vpn_service.create_config(nickname, user_uuid)
+            success, vpn_url = await vpn_service.create_config(
+                nickname=nickname,
+                user_uuid=user_uuid,
+                traffic_limit=traffic_limit,
+                limit_ip=limit_ip
+            )
             
             # Сохраняем в базу
             client = Client(
                 user_id=user.id,
                 email=nickname,
                 uuid=user_uuid,
-                limit_ip=3,
-                total_traffic=2 * 1024 * 1024 * 1024,
+                limit_ip=limit_ip,
+                total_traffic=traffic_limit,
                 is_active=True,
                 config_data=vpn_url  # Сохраняем URL конфига
             )

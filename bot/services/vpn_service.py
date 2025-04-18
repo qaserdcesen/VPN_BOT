@@ -86,8 +86,18 @@ class VPNService:
         self.vpn_settings = settings
 
     # Только один метод для создания VPN
-    async def create_config(self, nickname: str, user_uuid: str) -> tuple[bool, str]:
-        """Создает конфигурацию VPN на сервере и возвращает URL"""
+    async def create_config(self, nickname: str, user_uuid: str, traffic_limit=None, limit_ip=3) -> tuple[bool, str]:
+        """Создает конфигурацию VPN на сервере и возвращает URL
+        
+        Args:
+            nickname: Имя пользователя для VPN
+            user_uuid: UUID клиента
+            traffic_limit: Лимит трафика в байтах (0 для безлимита)
+            limit_ip: Максимальное количество одновременных подключений
+            
+        Returns:
+            tuple: (success, vpn_url)
+        """
         cookie_jar = aiohttp.CookieJar(unsafe=True)
         saved_cookies = self._load_cookies()
         if saved_cookies:
@@ -98,6 +108,10 @@ class VPNService:
             "Content-Type": "application/json",
             "Accept": "application/json"
         }
+        
+        # Если трафик не указан, используем 2GB по умолчанию
+        if traffic_limit is None:
+            traffic_limit = 2 * 1024 * 1024 * 1024
 
         async with aiohttp.ClientSession(cookie_jar=cookie_jar) as session:
             need_auth = not saved_cookies
@@ -126,8 +140,8 @@ class VPNService:
                         "id": user_uuid,
                         "flow": "xtls-rprx-vision",
                         "email": nickname,
-                        "limitIp": 3,
-                        "totalGB": 2 * 1024 * 1024 * 1024,
+                        "limitIp": limit_ip,
+                        "totalGB": traffic_limit,
                         "expiryTime": 0,
                         "enable": True,
                         "tgId": "",
