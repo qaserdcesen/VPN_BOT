@@ -10,6 +10,7 @@ from bot.models.plan import Plan
 from bot.models.client import Client
 from bot.config import YOOKASSA_SHOP_ID, YOOKASSA_SECRET_KEY, PAYMENT_RETURN_URL
 from bot.keyboards.subscription_kb import TARIFFS
+from bot.services.vpn_service import VPNService
 
 # Настройка логирования
 logger = logging.getLogger(__name__)
@@ -549,6 +550,25 @@ class PaymentService:
             
             # Сохраняем изменения
             await session.commit()
+            
+            # Вызываем метод update_client_on_server для обновления клиента на сервере
+            vpn_service = VPNService()
+            expiry_timestamp = int(client.expiry_time.timestamp() * 1000) if client.expiry_time else 0
+            
+            # Обновляем клиента на сервере VPN
+            update_result = await vpn_service.update_client_on_server(
+                user_uuid=client.uuid,
+                nickname=client.email,
+                traffic_limit=client.total_traffic,
+                limit_ip=client.limit_ip,
+                expiry_time=expiry_timestamp
+            )
+            
+            if update_result:
+                logger.info(f"Клиент {client.email} ({client.uuid}) успешно обновлен на VPN сервере")
+            else:
+                logger.warning(f"Не удалось обновить клиента {client.email} ({client.uuid}) на VPN сервере")
+            
             return True
             
         except Exception as e:

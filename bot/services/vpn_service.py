@@ -3,6 +3,10 @@ import aiohttp
 import os
 from bot.config import API_BASE_URL, INBOUND_ID, API_USERNAME, API_PASSWORD, COOKIES_FILE
 from yarl import URL
+import logging
+
+# Настройка логирования
+logger = logging.getLogger(__name__)
 
 class VPNSettings:
     def __init__(self, 
@@ -162,4 +166,89 @@ class VPNService:
             
             # После успешного создания клиента генерируем URL
             vpn_url = self.generate_vpn_url(user_uuid, nickname)
-            return True, vpn_url 
+            return True, vpn_url
+    
+    async def update_client_on_server(self, user_uuid: str, nickname: str, traffic_limit: int, 
+                                     limit_ip: int, expiry_time: int = 0) -> bool:
+        """
+        Обновляет параметры клиента на VPN сервере
+        
+        Args:
+            user_uuid: UUID клиента
+            nickname: Имя пользователя
+            traffic_limit: Лимит трафика в байтах (0 для безлимита)
+            limit_ip: Максимальное количество одновременных подключений
+            expiry_time: Время истечения в миллисекундах (0 - бессрочно)
+            
+        Returns:
+            bool: True если успешно обновлено
+        """
+        try:
+            cookie_jar = aiohttp.CookieJar(unsafe=True)
+            saved_cookies = self._load_cookies()
+            if saved_cookies:
+                self._update_cookie_jar(cookie_jar, saved_cookies)
+                logger.info("Загружены сохраненные куки для обновления клиента.")
+
+            headers = {
+                "Content-Type": "application/json",
+                "Accept": "application/json"
+            }
+
+            async with aiohttp.ClientSession(cookie_jar=cookie_jar) as session:
+                # Проверка необходимости авторизации
+                need_auth = not saved_cookies
+                if need_auth:
+                    login_url = f"{self.base_url}/login"
+                    login_data = {"username": self.username, "password": self.password}
+                    logger.info("Отправляем запрос на авторизацию для обновления клиента...")
+                    async with session.post(login_url, json=login_data, headers=headers) as response:
+                        login_response_text = await response.text()
+                        logger.info(f"Статус-код авторизации: {response.status}")
+                        logger.debug(f"Ответ сервера: {login_response_text}")
+                        if response.status != 200:
+                            raise Exception("Ошибка авторизации!")
+                    cookies = session.cookie_jar.filter_cookies(URL(self.base_url))
+                    cookies_dict = {key: morsel.value for key, morsel in cookies.items()}
+                    self._save_cookies(cookies_dict)
+                    logger.info("Куки сохранены.")
+                else:
+                    logger.info("Используем сохраненные куки для авторизации.")
+
+                # Обновляем клиента
+                client_data = {
+                    "id": int(self.inbound_id),
+                    "settings": json.dumps({
+                        "clients": [{
+                            "id": user_uuid,
+                            "flow": "xtls-rprx-vision",
+                            "email": nickname,
+                            "limitIp": limit_ip,
+                            "totalGB": traffic_limit,
+                            "expiryTime": expiry_time,
+                            "enable": True,
+                            "tgId": "",
+                            "subId": "test-sub-id",
+                            "reset": 0
+                        }]
+                    })
+                }
+
+                update_client_url = f"{self.base_url}/panel/api/inbounds/updateClient/{user_uuid}"
+                logger.info(f"Отправляем запрос на обновление клиента {nickname} ({user_uuid})")
+                logger.debug(f"Данные для обновления: {client_data}")
+                
+                async with session.post(update_client_url, headers=headers, json=client_data) as response:
+                    client_response_text = await response.text()
+                    logger.info(f"Статус-код при обновлении: {response.status}")
+                    logger.debug(f"Ответ сервера: {client_response_text}")
+                    
+                    if response.status != 200:
+                        raise Exception(f"Ошибка при обновлении клиента: {client_response_text}")
+                    
+                    logger.info(f"Клиент {nickname} ({user_uuid}) успешно обновлен!")
+                    return True
+                    
+        except Exception as e:
+            logger.error(f"Ошибка при обновлении клиента {user_uuid}: {e}")
+            return False 
