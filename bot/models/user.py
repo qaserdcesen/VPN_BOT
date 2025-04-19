@@ -11,7 +11,6 @@ class User(Base):
     username = Column(String(255), nullable=True)
     email = Column(String(255), nullable=True)  # Поле для хранения email
     created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
     
     # Поля для бана
     is_banned = Column(Boolean, default=False)

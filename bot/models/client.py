@@ -14,8 +14,8 @@ class Client(Base):
     expiry_time = Column(DateTime)
     is_active = Column(Boolean, default=True)
     tg_notified = Column(Boolean, default=False)
-    reset = Column(Integer)
-    config_data = Column(Text, nullable=True)  # Оставляем на будущее
+    config_data = Column(Text, nullable=True)  # URL конфигурации VPN
+    tariff_id = Column(Integer, nullable=True)  # Номер типа тарифа (1 - base, 2 - middle, 3 - unlimited)
     
     # Добавляем отношение с пользователем
     user = relationship("User", back_populates="clients")

@@ -634,21 +634,30 @@ class PaymentService:
             
             # Определяем лимит IP в зависимости от тарифа
             limit_ip = 3  # Базовый лимит
+            tariff_id = 1  # Базовый тариф по умолчанию
             
-            if "unlimited" in plan.title.lower():
-                limit_ip = 6  # Для безлимитного тарифа 6 IP
+            if "base" in plan.title.lower():
+                tariff_id = 1
+                limit_ip = 3
+            elif "middle" in plan.title.lower():
+                tariff_id = 2
+                limit_ip = 3
+            elif "unlimited" in plan.title.lower():
+                tariff_id = 3
+                limit_ip = 6
             
             # Обновляем информацию о клиенте
             client.total_traffic = plan.traffic_limit  # Устанавливаем лимит трафика из плана
             client.limit_ip = limit_ip  # Обновляем лимит IP
             client.is_active = True  # Активируем клиента
+            client.tariff_id = tariff_id  # Сохраняем номер типа тарифа
             
             # Устанавливаем срок действия (30 дней от текущей даты)
             client.expiry_time = datetime.now() + timedelta(days=plan.duration_days)
             
             logger.info(f"Клиент (user_id={user_id}) обновлен в БД согласно тарифу {plan.title}: "
                         f"лимит трафика={plan.traffic_limit}, лимит IP={limit_ip}, "
-                        f"срок действия до {client.expiry_time}")
+                        f"номер тарифа={tariff_id}, срок действия до {client.expiry_time}")
             
             # Сохраняем изменения в БД
             await session.commit()
