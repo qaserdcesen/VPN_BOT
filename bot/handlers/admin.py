@@ -14,6 +14,10 @@ from bot.config import ADMIN_IDS
 from sqlalchemy import func, desc
 import math
 import asyncio
+import random
+import string
+from datetime import datetime, timedelta
+from decimal import Decimal
 
 router = Router()
 logger = logging.getLogger(__name__)
@@ -21,6 +25,14 @@ logger = logging.getLogger(__name__)
 # Состояния FSM для рассылки
 class BroadcastStates(StatesGroup):
     waiting_for_message = State()  # Ожидание сообщения для рассылки
+
+# Состояния FSM для создания промокода
+class PromoStates(StatesGroup):
+    waiting_for_code = State()  # Ожидание ввода кода промокода
+    waiting_for_discount = State()  # Ожидание ввода скидки
+    waiting_for_expiration = State()  # Ожидание ввода срока действия
+    waiting_for_limit = State()  # Ожидание ввода лимита использований
+    waiting_for_confirmation = State()  # Ожидание подтверждения создания промокода
 
 # Функция проверки является ли пользователь администратором
 async def is_admin(user_id: int) -> bool:
@@ -236,9 +248,11 @@ def format_payments(payments):
 
 def format_promos(promos):
     result = []
+    buttons = []
+    
     for promo in promos:
         status = "✅ Активен" if promo.is_active else "❌ Неактивен"
-        expiry = promo.expiration_date.strftime('%d.%m.%Y %H:%M') if promo.expiration_date else "Нет срока"
+        expiry = promo.expiration_date.strftime('%d.%m.%Y %H:%M') if promo.expiration_date else "Бессрочно"
         
         result.append(
             f"🎟 <b>ID:</b> {promo.id} | <b>Код:</b> <code>{promo.code}</code>\n"
@@ -247,6 +261,13 @@ def format_promos(promos):
             f"📅 Действует до: {expiry}\n"
             f"Status: {status}\n"
         )
+        
+        # Добавляем кнопки деактивации для активных промокодов
+        if promo.is_active:
+            buttons.append([types.InlineKeyboardButton(
+                text=f"❌ Деактивировать {promo.code}",
+                callback_data=f"delete_promo_{promo.id}"
+            )])
     
     return "\n".join(result) if result else "Нет промокодов."
 
@@ -311,7 +332,20 @@ async def process_admin_promos(callback: types.CallbackQuery):
         await callback.answer("У вас нет прав администратора", show_alert=True)
         return
     
+    # Добавляем кнопку создания промокода
+    keyboard = types.InlineKeyboardMarkup(inline_keyboard=[
+        [types.InlineKeyboardButton(text="➕ Создать промокод", callback_data="admin_create_promo")],
+        [types.InlineKeyboardButton(text="Назад в меню", callback_data="admin_back")]
+    ])
+    
     text, markup = await paginate_results(get_promos, 1, 5, format_promos)
+    
+    # Добавляем кнопку создания промокода к существующей клавиатуре
+    if markup:
+        markup.inline_keyboard.insert(0, [types.InlineKeyboardButton(text="➕ Создать промокод", callback_data="admin_create_promo")])
+    else:
+        markup = keyboard
+    
     await callback.message.edit_text(text, reply_markup=markup, parse_mode="HTML")
     await callback.answer()
 
@@ -517,6 +551,319 @@ async def confirm_broadcast(callback: types.CallbackQuery, state: FSMContext):
     
     # Очищаем состояние
     await state.clear()
+
+# Функция генерации случайного кода промокода
+def generate_promo_code(length=8):
+    """Генерирует случайный промокод из букв и цифр"""
+    chars = string.ascii_uppercase + string.digits
+    return ''.join(random.choice(chars) for _ in range(length))
+
+# Обработчики для создания промокода
+@router.callback_query(lambda c: c.data == "admin_create_promo")
+async def start_create_promo(callback: types.CallbackQuery, state: FSMContext):
+    if not await is_admin(callback.from_user.id):
+        await callback.answer("У вас нет прав администратора", show_alert=True)
+        return
+    
+    # Генерируем случайный код промокода
+    promo_code = generate_promo_code()
+    
+    # Сохраняем сгенерированный код в состоянии
+    await state.update_data(promo_code=promo_code)
+    
+    await callback.message.edit_text(
+        f"🎟 Создание нового промокода\n\n"
+        f"Предлагаемый код: <code>{promo_code}</code>\n\n"
+        f"Введите свой код промокода или нажмите 'Использовать предложенный':",
+        reply_markup=types.InlineKeyboardMarkup(inline_keyboard=[
+            [types.InlineKeyboardButton(text=f"Использовать {promo_code}", callback_data="use_suggested_code")],
+            [types.InlineKeyboardButton(text="Отмена", callback_data="admin_promos")]
+        ]),
+        parse_mode="HTML"
+    )
+    
+    await state.set_state(PromoStates.waiting_for_code)
+    await callback.answer()
+
+@router.callback_query(lambda c: c.data == "use_suggested_code", PromoStates.waiting_for_code)
+async def use_suggested_code(callback: types.CallbackQuery, state: FSMContext):
+    # Получаем сохраненный код из состояния
+    user_data = await state.get_data()
+    promo_code = user_data.get("promo_code", generate_promo_code())
+    
+    await ask_for_discount(callback.message, state, promo_code)
+    await callback.answer()
+
+@router.message(PromoStates.waiting_for_code)
+async def process_promo_code(message: types.Message, state: FSMContext):
+    # Получаем введенный код
+    promo_code = message.text.strip().upper()
+    
+    # Проверяем, существует ли уже такой промокод
+    async with async_session() as session:
+        result = await session.execute(select(Promo).where(Promo.code == promo_code))
+        existing_promo = result.scalar_one_or_none()
+        
+        if existing_promo:
+            await message.answer(
+                f"❌ Промокод <code>{promo_code}</code> уже существует. Пожалуйста, придумайте другой код.",
+                parse_mode="HTML"
+            )
+            return
+    
+    await ask_for_discount(message, state, promo_code)
+
+async def ask_for_discount(message, state, promo_code):
+    # Сохраняем код промокода
+    await state.update_data(promo_code=promo_code)
+    
+    # Запрашиваем скидку
+    await message.answer(
+        f"Выбран код: <code>{promo_code}</code>\n\n"
+        f"Введите размер скидки в процентах (от 1 до 100):",
+        reply_markup=types.InlineKeyboardMarkup(inline_keyboard=[
+            [types.InlineKeyboardButton(text="10%", callback_data="discount_10")],
+            [types.InlineKeyboardButton(text="20%", callback_data="discount_20")],
+            [types.InlineKeyboardButton(text="30%", callback_data="discount_30")],
+            [types.InlineKeyboardButton(text="50%", callback_data="discount_50")],
+            [types.InlineKeyboardButton(text="Отмена", callback_data="admin_promos")]
+        ]),
+        parse_mode="HTML"
+    )
+    
+    await state.set_state(PromoStates.waiting_for_discount)
+
+@router.callback_query(lambda c: c.data.startswith("discount_"), PromoStates.waiting_for_discount)
+async def process_discount_button(callback: types.CallbackQuery, state: FSMContext):
+    # Получаем скидку из callback data
+    discount = int(callback.data.split("_")[1])
+    
+    await process_discount_value(callback.message, state, discount)
+    await callback.answer()
+
+@router.message(PromoStates.waiting_for_discount)
+async def process_discount_message(message: types.Message, state: FSMContext):
+    try:
+        discount = float(message.text.strip().replace(',', '.'))
+        
+        if discount <= 0 or discount > 100:
+            await message.answer("❌ Скидка должна быть от 1 до 100%. Попробуйте снова.")
+            return
+        
+        await process_discount_value(message, state, discount)
+    except ValueError:
+        await message.answer("❌ Пожалуйста, введите число от 1 до 100. Попробуйте снова.")
+
+async def process_discount_value(message, state, discount):
+    # Сохраняем размер скидки
+    await state.update_data(discount=discount)
+    
+    # Предлагаем варианты срока действия
+    await message.answer(
+        f"Скидка: {discount}%\n\n"
+        f"Выберите срок действия промокода:",
+        reply_markup=types.InlineKeyboardMarkup(inline_keyboard=[
+            [types.InlineKeyboardButton(text="1 день", callback_data="expiration_1")],
+            [types.InlineKeyboardButton(text="1 неделя", callback_data="expiration_7")],
+            [types.InlineKeyboardButton(text="1 месяц", callback_data="expiration_30")],
+            [types.InlineKeyboardButton(text="3 месяца", callback_data="expiration_90")],
+            [types.InlineKeyboardButton(text="Бессрочно", callback_data="expiration_0")],
+            [types.InlineKeyboardButton(text="Отмена", callback_data="admin_promos")]
+        ])
+    )
+    
+    await state.set_state(PromoStates.waiting_for_expiration)
+
+@router.callback_query(lambda c: c.data.startswith("expiration_"), PromoStates.waiting_for_expiration)
+async def process_expiration(callback: types.CallbackQuery, state: FSMContext):
+    # Получаем срок действия в днях
+    days = int(callback.data.split("_")[1])
+    
+    # Рассчитываем дату истечения срока действия
+    if days > 0:
+        expiration_date = datetime.now() + timedelta(days=days)
+        expiration_str = expiration_date.strftime("%d.%m.%Y %H:%M")
+    else:
+        expiration_date = None
+        expiration_str = "Бессрочно"
+    
+    # Сохраняем дату истечения срока
+    await state.update_data(expiration_date=expiration_date)
+    
+    # Запрашиваем лимит использований
+    await callback.message.edit_text(
+        f"Срок действия: {expiration_str}\n\n"
+        f"Укажите лимит использования промокода (сколько раз можно использовать):",
+        reply_markup=types.InlineKeyboardMarkup(inline_keyboard=[
+            [types.InlineKeyboardButton(text="1 раз", callback_data="limit_1")],
+            [types.InlineKeyboardButton(text="5 раз", callback_data="limit_5")],
+            [types.InlineKeyboardButton(text="10 раз", callback_data="limit_10")],
+            [types.InlineKeyboardButton(text="100 раз", callback_data="limit_100")],
+            [types.InlineKeyboardButton(text="Без ограничений", callback_data="limit_0")],
+            [types.InlineKeyboardButton(text="Отмена", callback_data="admin_promos")]
+        ])
+    )
+    
+    await state.set_state(PromoStates.waiting_for_limit)
+    await callback.answer()
+
+@router.callback_query(lambda c: c.data.startswith("limit_"), PromoStates.waiting_for_limit)
+async def process_limit(callback: types.CallbackQuery, state: FSMContext):
+    # Получаем лимит использований
+    limit = int(callback.data.split("_")[1])
+    
+    await process_limit_value(callback.message, state, limit)
+    await callback.answer()
+
+@router.message(PromoStates.waiting_for_limit)
+async def process_limit_message(message: types.Message, state: FSMContext):
+    try:
+        limit = int(message.text.strip())
+        
+        if limit < 0:
+            await message.answer("❌ Лимит не может быть отрицательным. Попробуйте снова.")
+            return
+        
+        await process_limit_value(message, state, limit)
+    except ValueError:
+        await message.answer("❌ Пожалуйста, введите целое число. Попробуйте снова.")
+
+async def process_limit_value(message, state, limit):
+    # Сохраняем лимит использований
+    await state.update_data(usage_limit=limit if limit > 0 else None)
+    
+    # Получаем все сохраненные данные для подтверждения
+    user_data = await state.get_data()
+    promo_code = user_data.get("promo_code")
+    discount = user_data.get("discount")
+    expiration_date = user_data.get("expiration_date")
+    usage_limit = user_data.get("usage_limit")
+    
+    # Форматируем данные для отображения
+    expiration_str = expiration_date.strftime("%d.%m.%Y %H:%M") if expiration_date else "Бессрочно"
+    limit_str = str(usage_limit) if usage_limit else "Без ограничений"
+    
+    # Запрашиваем подтверждение создания промокода
+    await message.answer(
+        f"📝 Создание промокода: подтверждение\n\n"
+        f"Код: <code>{promo_code}</code>\n"
+        f"Скидка: {discount}%\n"
+        f"Срок действия: {expiration_str}\n"
+        f"Лимит использований: {limit_str}\n\n"
+        f"Все верно?",
+        reply_markup=types.InlineKeyboardMarkup(inline_keyboard=[
+            [types.InlineKeyboardButton(text="✅ Создать промокод", callback_data="confirm_create_promo")],
+            [types.InlineKeyboardButton(text="❌ Отмена", callback_data="admin_promos")]
+        ]),
+        parse_mode="HTML"
+    )
+    
+    await state.set_state(PromoStates.waiting_for_confirmation)
+
+@router.callback_query(lambda c: c.data == "confirm_create_promo", PromoStates.waiting_for_confirmation)
+async def create_promo(callback: types.CallbackQuery, state: FSMContext):
+    # Получаем все сохраненные данные
+    user_data = await state.get_data()
+    promo_code = user_data.get("promo_code")
+    discount = user_data.get("discount")
+    expiration_date = user_data.get("expiration_date")
+    usage_limit = user_data.get("usage_limit")
+    
+    try:
+        # Создаем новый промокод в БД
+        async with async_session() as session:
+            # Проверяем, не существует ли уже такой промокод
+            result = await session.execute(select(Promo).where(Promo.code == promo_code))
+            existing_promo = result.scalar_one_or_none()
+            
+            if existing_promo:
+                await callback.message.edit_text(
+                    f"❌ Промокод <code>{promo_code}</code> уже существует. Операция отменена.",
+                    parse_mode="HTML"
+                )
+                await state.clear()
+                await callback.answer()
+                return
+            
+            # Создаем новый промокод
+            new_promo = Promo(
+                code=promo_code,
+                discount=Decimal(str(discount)),
+                expiration_date=expiration_date,
+                usage_limit=usage_limit,
+                used_count=0,
+                is_active=True
+            )
+            
+            session.add(new_promo)
+            await session.commit()
+            
+            # Подтверждаем создание промокода
+            await callback.message.edit_text(
+                f"✅ Промокод <code>{promo_code}</code> успешно создан!\n\n"
+                f"Скидка: {discount}%\n"
+                f"Срок действия: {expiration_date.strftime('%d.%m.%Y %H:%M') if expiration_date else 'Бессрочно'}\n"
+                f"Лимит использований: {usage_limit if usage_limit else 'Без ограничений'}",
+                reply_markup=types.InlineKeyboardMarkup(inline_keyboard=[
+                    [types.InlineKeyboardButton(text="К списку промокодов", callback_data="admin_promos")],
+                    [types.InlineKeyboardButton(text="В главное меню", callback_data="admin_back")]
+                ]),
+                parse_mode="HTML"
+            )
+            
+            logger.info(f"Администратор {callback.from_user.id} создал новый промокод: {promo_code}")
+            
+    except Exception as e:
+        logger.error(f"Ошибка при создании промокода: {e}")
+        await callback.message.edit_text(
+            f"❌ Произошла ошибка при создании промокода: {e}",
+            reply_markup=types.InlineKeyboardMarkup(inline_keyboard=[
+                [types.InlineKeyboardButton(text="К списку промокодов", callback_data="admin_promos")],
+                [types.InlineKeyboardButton(text="В главное меню", callback_data="admin_back")]
+            ])
+        )
+    
+    # Очищаем состояние
+    await state.clear()
+    await callback.answer()
+
+# Обработчик для удаления промокода
+@router.callback_query(lambda c: c.data.startswith("delete_promo_"))
+async def delete_promo(callback: types.CallbackQuery):
+    if not await is_admin(callback.from_user.id):
+        await callback.answer("У вас нет прав администратора", show_alert=True)
+        return
+    
+    promo_id = int(callback.data.split("_")[2])
+    
+    try:
+        async with async_session() as session:
+            # Получаем промокод
+            result = await session.execute(select(Promo).where(Promo.id == promo_id))
+            promo = result.scalar_one_or_none()
+            
+            if not promo:
+                await callback.answer("Промокод не найден", show_alert=True)
+                return
+            
+            # Деактивируем промокод (не удаляем физически)
+            promo.is_active = False
+            await session.commit()
+            
+            await callback.answer(f"Промокод {promo.code} деактивирован", show_alert=True)
+            
+            # Обновляем список промокодов
+            text, markup = await paginate_results(get_promos, 1, 5, format_promos)
+            
+            # Добавляем кнопку создания промокода
+            if markup:
+                markup.inline_keyboard.insert(0, [types.InlineKeyboardButton(text="➕ Создать промокод", callback_data="admin_create_promo")])
+            
+            await callback.message.edit_text(text, reply_markup=markup, parse_mode="HTML")
+            
+    except Exception as e:
+        logger.error(f"Ошибка при деактивации промокода {promo_id}: {e}")
+        await callback.answer("Произошла ошибка при деактивации промокода", show_alert=True)
 
 # Регистрация обработчиков
 def register_admin_handlers(dp):
