@@ -634,7 +634,7 @@ class PaymentService:
             
             # Определяем лимит IP в зависимости от тарифа
             limit_ip = 3  # Базовый лимит
-            tariff_id = 1  # Базовый тариф по умолчанию
+            tariff_id = 0  # Начальный тариф ftw.none по умолчанию
             
             if "base" in plan.title.lower():
                 tariff_id = 1

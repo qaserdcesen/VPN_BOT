@@ -2,6 +2,7 @@ from aiogram import Router, types, Dispatcher
 from aiogram.filters import CommandStart
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 import uuid
+import logging
 from bot.services.vpn_service import VPNService
 from bot.utils.db import async_session
 from bot.models.client import Client
@@ -13,6 +14,7 @@ from bot.keyboards.subscription_kb import get_tariffs_info, get_tariffs_keyboard
 
 router = Router()
 vpn_service = VPNService()
+logger = logging.getLogger(__name__)
 
 @router.message(CommandStart())
 async def cmd_start(message: types.Message):
@@ -100,7 +102,8 @@ async def process_get_config(callback: types.CallbackQuery):
                 limit_ip=limit_ip,
                 total_traffic=traffic_limit,
                 is_active=True,
-                config_data=vpn_url  # Сохраняем URL конфига
+                config_data=vpn_url,  # Сохраняем URL конфига
+                tariff_id=0  # Базовый тариф ftw.none для новых пользователей
             )
             session.add(client)
             await session.commit()
@@ -125,10 +128,70 @@ async def process_get_config(callback: types.CallbackQuery):
     
     await callback.answer()
 
+# Функция для определения названия тарифа по его ID
+def get_tariff_name_by_id(tariff_id):
+    if tariff_id == 0:
+        return "ftw.none"
+    elif tariff_id == 1:
+        return "ftw.base"
+    elif tariff_id == 2:
+        return "ftw.middle"
+    elif tariff_id == 3:
+        return "ftw.unlimited"
+    else:
+        return "Не определен"
+
 # Обновляем обработчики для кнопок меню, теперь используем текст сообщения вместо callback_data
 @router.message(lambda message: message.text == "Мой профиль")
 async def process_profile(message: types.Message):
-    await message.answer("Информация о вашем профиле...")
+    try:
+        async with async_session() as session:
+            # Получаем пользователя
+            user_query = await session.execute(
+                select(User).where(User.tg_id == message.from_user.id)
+            )
+            user = user_query.scalar_one_or_none()
+            
+            if not user:
+                await message.answer("❌ Ваш профиль не найден. Пожалуйста, запустите бота снова с помощью команды /start")
+                return
+            
+            # Получаем клиента пользователя
+            client_query = await session.execute(
+                select(Client).where(Client.user_id == user.id)
+            )
+            client = client_query.scalar_one_or_none()
+            
+            if not client:
+                await message.answer("📱 У вас еще нет активной подписки. Выберите 'Подписка и оплата' для приобретения тарифа.")
+                return
+            
+            # Форматируем срок действия
+            expiry_date = "Не ограничен"
+            if client.expiry_time:
+                expiry_date = client.expiry_time.strftime("%d.%m.%Y %H:%M")
+            
+            # Получаем название тарифа
+            tariff_name = get_tariff_name_by_id(client.tariff_id)
+            
+            # Формируем сообщение профиля
+            profile_text = (
+                f"<b>📱 Мой профиль</b>\n\n"
+                f"<b>Telegram ID:</b> {message.from_user.id}\n"
+                f"<b>Тип подписки:</b> {tariff_name}\n"
+                f"<b>Действует до:</b> {expiry_date}\n"
+            )
+            
+            # Добавляем URL конфигурации, если он есть
+            if client.config_data:
+                profile_text += f"\n<b>Ваша VPN конфигурация:</b>\n<code>{client.config_data}</code>"
+            else:
+                profile_text += "\n⚠️ У вас нет активной VPN конфигурации"
+            
+            await message.answer(profile_text, parse_mode="HTML")
+    except Exception as e:
+        logger.error(f"Ошибка при отображении профиля: {e}")
+        await message.answer("❌ Произошла ошибка при загрузке профиля. Пожалуйста, попробуйте позже.")
 
 @router.message(lambda message: message.text == "Подписка и оплата")
 async def show_subscription_info(message: types.Message):
