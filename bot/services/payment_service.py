@@ -12,6 +12,7 @@ from bot.models.client import Client
 from bot.config import YOOKASSA_SHOP_ID, YOOKASSA_SECRET_KEY, PAYMENT_RETURN_URL
 from bot.keyboards.subscription_kb import TARIFFS
 from bot.services.vpn_service import VPNService
+from bot.services.promo_service import PromoService
 
 # Настройка логирования
 logger = logging.getLogger(__name__)
@@ -103,7 +104,7 @@ class PaymentService:
             return plan
     
     @staticmethod
-    async def create_payment(user_id: int, tariff_key: str, contact: str = None, bot=None):
+    async def create_payment(user_id: int, tariff_key: str, contact: str = None, promo_code: str = None, bot=None):
         """
         Создает платеж в YooKassa и сохраняет в БД
         
@@ -111,6 +112,7 @@ class PaymentService:
             user_id: Telegram ID пользователя
             tariff_key: Ключ тарифа (например, "base", "middle", "unlimited")
             contact: Email или телефон для чека (опционально)
+            promo_code: Промокод для скидки (опционально)
             bot: Экземпляр бота для отправки уведомлений (опционально)
             
         Returns:
@@ -130,6 +132,19 @@ class PaymentService:
                 
                 # Получаем план по тарифу
                 plan = await PaymentService.get_plan_by_tariff(tariff_key)
+                
+                # Применяем промокод, если он указан
+                discount_percent = 0
+                original_price = plan.price
+                
+                if promo_code:
+                    is_valid, discount_percent, promo = await PromoService.check_promo(promo_code, user.id)
+                    if is_valid:
+                        # Применяем скидку
+                        plan.price = int(plan.price * (100 - discount_percent) / 100)
+                        logger.info(f"Применен промокод {promo_code}: цена снижена с {original_price} до {plan.price} руб. (скидка {discount_percent}%)")
+                    else:
+                        logger.warning(f"Недействительный промокод {promo_code} для пользователя {user_id}")
                 
                 # Используем тестовый режим, если YooKassa не настроена или включен тестовый режим
                 if TEST_MODE or not yookassa_configured:
@@ -156,7 +171,12 @@ class PaymentService:
                         ]
                     )
                     
-                    logger.info(f"Создан тестовый платеж {payment_id} для пользователя {user_id}, тариф: {tariff_key}")
+                    # Если был применен промокод, отмечаем его как использованный
+                    if promo_code and discount_percent > 0:
+                        await PromoService.use_promo(promo_code, user.id)
+                    
+                    logger.info(f"Создан тестовый платеж {payment_id} для пользователя {user_id}, тариф: {tariff_key}" + 
+                                (f", с промокодом {promo_code} (скидка {discount_percent}%)" if promo_code and discount_percent > 0 else ""))
                     
                     return payment_id, payment_url, markup
                 
@@ -172,12 +192,16 @@ class PaymentService:
                         "return_url": PAYMENT_RETURN_URL
                     },
                     "capture": True,
-                    "description": f"Оплата тарифа {tariff_info['name']}",
+                    "description": f"Оплата тарифа {tariff_info['name']}" + 
+                                   (f" со скидкой {discount_percent}%" if discount_percent > 0 else ""),
                     "metadata": {
                         "tg_user_id": user_id,
                         "tariff": tariff_key,
                         "db_user_id": user.id,
-                        "plan_id": plan.id
+                        "plan_id": plan.id,
+                        "original_price": original_price,
+                        "discount_percent": discount_percent,
+                        "promo_code": promo_code if promo_code and discount_percent > 0 else None
                     }
                 }
                 
@@ -233,7 +257,12 @@ class PaymentService:
                     ]
                 )
                 
-                logger.info(f"Создан платеж {payment_id} для пользователя {user_id}, тариф: {tariff_key}")
+                # Если был применен промокод, отмечаем его как использованный
+                if promo_code and discount_percent > 0:
+                    await PromoService.use_promo(promo_code, user.id)
+                
+                logger.info(f"Создан платеж {payment_id} для пользователя {user_id}, тариф: {tariff_key}" + 
+                            (f", с промокодом {promo_code} (скидка {discount_percent}%)" if promo_code and discount_percent > 0 else ""))
                 
                 return payment_id, payment_url, markup
                 

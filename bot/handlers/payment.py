@@ -10,6 +10,7 @@ from bot.models.user import User
 from bot.utils.db import async_session
 from bot.services.payment_service import DEFAULT_EMAIL
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from bot.services.promo_service import PromoService
 
 router = Router()
 logger = logging.getLogger(__name__)
@@ -17,6 +18,7 @@ logger = logging.getLogger(__name__)
 class ContactState(StatesGroup):
     waiting_for_contact = State()
     tariff_selected = State()
+    waiting_for_promo = State()  # Новое состояние для ввода промокода
 
 # Обработчик для выбора тарифа
 @router.callback_query(lambda c: c.data.startswith("tariff_"))
@@ -99,63 +101,87 @@ async def use_saved_email(callback: types.CallbackQuery, state: FSMContext):
         
         email = user.email
     
-    # Получаем выбранный тариф и создаем платеж
-    await create_payment_with_email(callback, state, email)
+    # Спрашиваем о промокоде
+    await ask_for_promo(callback, state, email)
 
-# Функция для создания платежа с указанным email
-async def create_payment_with_email(callback_or_message, state, email):
+# Обработчик для ввода промокода
+@router.callback_query(F.data == "enter_promo")
+async def request_promo(callback: types.CallbackQuery, state: FSMContext):
+    await callback.message.edit_text(
+        "Введите промокод или нажмите кнопку 'Пропустить':",
+        reply_markup=types.InlineKeyboardMarkup(inline_keyboard=[
+            [types.InlineKeyboardButton(text="Пропустить", callback_data="skip_promo")],
+            [types.InlineKeyboardButton(text="Назад", callback_data="back_to_tariffs")],
+        ])
+    )
+    
+    # Переходим в состояние ожидания промокода
+    await state.set_state(ContactState.waiting_for_promo)
+    await callback.answer()
+
+# Обработчик для пропуска промокода
+@router.callback_query(F.data == "skip_promo")
+async def skip_promo(callback: types.CallbackQuery, state: FSMContext):
+    # Получаем данные из состояния
+    user_data = await state.get_data()
+    email = user_data.get("email")
+    
+    # Создаем платеж без промокода
+    await create_payment_with_email(callback, state, email, None)
+
+# Обработчик для обработки введенного промокода
+@router.message(ContactState.waiting_for_promo)
+async def process_promo(message: types.Message, state: FSMContext):
+    promo_code = message.text.strip()
+    
+    # Получаем данные из состояния
+    user_data = await state.get_data()
+    email = user_data.get("email")
+    user_id = message.from_user.id
+    
+    # Проверяем промокод
+    is_valid, discount, promo = await PromoService.check_promo(promo_code, user_id)
+    
+    if is_valid:
+        # Создаем платеж с промокодом
+        await message.answer(
+            f"✅ Промокод применен. Скидка: {discount}%",
+        )
+        await create_payment_with_email(message, state, email, promo_code)
+    else:
+        # Если промокод невалидный
+        await message.answer(
+            "❌ Недействительный промокод. Попробуйте другой или нажмите 'Пропустить'.",
+            reply_markup=types.InlineKeyboardMarkup(inline_keyboard=[
+                [types.InlineKeyboardButton(text="Пропустить", callback_data="skip_promo")],
+                [types.InlineKeyboardButton(text="Назад", callback_data="back_to_tariffs")],
+            ])
+        )
+
+# Функция для запроса промокода
+async def ask_for_promo(callback_or_message, state, email):
     is_callback = isinstance(callback_or_message, types.CallbackQuery)
     message = callback_or_message.message if is_callback else callback_or_message
-    user_id = callback_or_message.from_user.id
     
-    # Получаем выбранный тариф
-    user_data = await state.get_data()
-    tariff_key = user_data.get("selected_tariff")
+    # Сохраняем email в состоянии
+    await state.update_data(email=email)
     
-    # Сбрасываем состояние
-    await state.clear()
-    
-    # Создаем платеж
-    try:
-        payment_id, payment_url, markup = await PaymentService.create_payment(
-            user_id=user_id,
-            tariff_key=tariff_key,
-            contact=email,
-            bot=callback_or_message.bot
-        )
-        
-        if payment_id and payment_url and markup:
-            text = (
-                f"💳 Для оплаты нажмите кнопку 'Оплатить'.\n"
-                f"После оплаты ваш тариф будет активирован автоматически."
-            )
-            
-            if is_callback:
-                await message.edit_text(text, reply_markup=markup)
-            else:
-                await message.answer(text, reply_markup=markup)
-        else:
-            text = "❌ Не удалось создать платеж. Пожалуйста, попробуйте позже."
-            
-            if is_callback:
-                await message.edit_text(text)
-            else:
-                await message.answer(text)
-    except ValueError as e:
-        text = f"❌ Ошибка: {str(e)}"
-        
-        if is_callback:
-            await message.edit_text(text)
-        else:
-            await message.answer(text)
-    except Exception as e:
-        logger.error(f"Ошибка при создании платежа: {e}")
-        text = "❌ Произошла ошибка при обработке платежа. Пожалуйста, попробуйте позже."
-        
-        if is_callback:
-            await message.edit_text(text)
-        else:
-            await message.answer(text)
+    # Спрашиваем, хочет ли пользователь ввести промокод
+    await message.edit_text(
+        "Хотите использовать промокод для скидки?",
+        reply_markup=types.InlineKeyboardMarkup(inline_keyboard=[
+            [types.InlineKeyboardButton(text="Ввести промокод", callback_data="enter_promo")],
+            [types.InlineKeyboardButton(text="Продолжить без промокода", callback_data="skip_promo")],
+            [types.InlineKeyboardButton(text="Назад", callback_data="back_to_tariffs")],
+        ])
+    ) if is_callback else await message.answer(
+        "Хотите использовать промокод для скидки?",
+        reply_markup=types.InlineKeyboardMarkup(inline_keyboard=[
+            [types.InlineKeyboardButton(text="Ввести промокод", callback_data="enter_promo")],
+            [types.InlineKeyboardButton(text="Продолжить без промокода", callback_data="skip_promo")],
+            [types.InlineKeyboardButton(text="Назад", callback_data="back_to_tariffs")],
+        ])
+    )
     
     if is_callback:
         await callback_or_message.answer()
@@ -213,8 +239,8 @@ async def process_contact(message: types.Message, state: FSMContext):
             await session.commit()
             logger.info(f"Создан пользователь {message.from_user.id} с email {email}")
     
-    # Создаем платеж с указанным email
-    await create_payment_with_email(message, state, email)
+    # Спрашиваем о промокоде
+    await ask_for_promo(message, state, email)
 
 # Обработчик для пропуска email (общий для обоих состояний)
 @router.callback_query(F.data == "skip_email")
@@ -235,8 +261,8 @@ async def skip_email(callback: types.CallbackQuery, state: FSMContext):
             session.add(user)
             await session.commit()
     
-    # Создаем платеж с почтой администратора
-    await create_payment_with_email(callback, state, DEFAULT_EMAIL)
+    # Спрашиваем о промокоде
+    await ask_for_promo(callback, state, DEFAULT_EMAIL)
 
 # Обработчик для отмены платежа
 @router.callback_query(lambda c: c.data.startswith("cancel_payment_"))
@@ -331,6 +357,65 @@ async def process_yookassa_success(callback: types.CallbackQuery):
         await callback.answer("Произошла ошибка, попробуйте позже", show_alert=True)
     
     await callback.answer()
+
+# Функция для создания платежа с указанным email
+async def create_payment_with_email(callback_or_message, state, email, promo_code=None):
+    is_callback = isinstance(callback_or_message, types.CallbackQuery)
+    message = callback_or_message.message if is_callback else callback_or_message
+    user_id = callback_or_message.from_user.id
+    
+    # Получаем выбранный тариф
+    user_data = await state.get_data()
+    tariff_key = user_data.get("selected_tariff")
+    
+    # Сбрасываем состояние
+    await state.clear()
+    
+    # Создаем платеж
+    try:
+        payment_id, payment_url, markup = await PaymentService.create_payment(
+            user_id=user_id,
+            tariff_key=tariff_key,
+            contact=email,
+            bot=callback_or_message.bot,
+            promo_code=promo_code
+        )
+        
+        if payment_id and payment_url and markup:
+            text = (
+                f"💳 Для оплаты нажмите кнопку 'Оплатить'.\n"
+                f"После оплаты ваш тариф будет активирован автоматически."
+            )
+            
+            if is_callback:
+                await message.edit_text(text, reply_markup=markup)
+            else:
+                await message.answer(text, reply_markup=markup)
+        else:
+            text = "❌ Не удалось создать платеж. Пожалуйста, попробуйте позже."
+            
+            if is_callback:
+                await message.edit_text(text)
+            else:
+                await message.answer(text)
+    except ValueError as e:
+        text = f"❌ Ошибка: {str(e)}"
+        
+        if is_callback:
+            await message.edit_text(text)
+        else:
+            await message.answer(text)
+    except Exception as e:
+        logger.error(f"Ошибка при создании платежа: {e}")
+        text = "❌ Произошла ошибка при обработке платежа. Пожалуйста, попробуйте позже."
+        
+        if is_callback:
+            await message.edit_text(text)
+        else:
+            await message.answer(text)
+    
+    if is_callback:
+        await callback_or_message.answer()
 
 def register_payment_handlers(dp):
     """Регистрирует обработчики платежей"""

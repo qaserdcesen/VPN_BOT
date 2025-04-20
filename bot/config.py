@@ -71,3 +71,6 @@ if missing_vars:
     sys.exit(1)
 
 COOKIES_FILE = "bot/data/cookies.json"  # путь для сохранения куки
+
+# Список ID администраторов (Telegram ID)
+ADMIN_IDS = [1320701464]  # Ваш Telegram ID

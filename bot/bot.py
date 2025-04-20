@@ -6,6 +6,7 @@ import logging
 from bot.config import BOT_TOKEN
 from bot.handlers.start import register_handlers
 from bot.handlers.payment import register_payment_handlers
+from bot.handlers.admin import register_admin_handlers
 from bot.utils.db import init_db
 from bot.utils.middlewares import ThrottlingMiddleware, BanCheckMiddleware, AntiFloodMiddleware
 from bot.services.ban_service import BanService
@@ -40,6 +41,7 @@ dp.callback_query.middleware(AntiFloodMiddleware(ban_service))  # Защита �
 # Регистрация обработчиков
 register_handlers(dp)
 register_payment_handlers(dp)
+register_admin_handlers(dp)
 
 # Функция запуска бота
 async def main() -> None:
