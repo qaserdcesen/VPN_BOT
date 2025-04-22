@@ -25,7 +25,10 @@ async def cmd_start(message: types.Message):
     )
     
     await message.answer(
-        "Привет! Нажми кнопку ниже, чтобы получить VPN конфигурацию",
+        "⚫ ftw.VPN — ваша невидимость в цифровом мире.\n\n"
+        "🔒 Обеспечиваем полную анонимность и безопасность ваших данных.\n\n"
+        "🌐 Высокоскоростное соединение и шифрование военного уровня.\n\n"
+        "⚡ Растворитесь в цифровой тени.",
         reply_markup=keyboard
     )
 
@@ -38,10 +41,10 @@ def format_client_info(client):
         traffic_info = f"{client.total_traffic / (1024 * 1024 * 1024):.1f} GB"
     
     return (
-        f"UUID: {client.uuid}\n"
-        f"Nickname: {client.email}\n"
-        f"Limit IP: {client.limit_ip}\n"
-        f"Traffic: {traffic_info}"
+        f"🔑 Идентификатор: {client.uuid}\n"
+        f"👤 Имя в сети: {client.email}\n"
+        f"📱 Лимит устройств: {client.limit_ip}\n"
+        f"📊 Трафик: {traffic_info}"
     )
 
 @router.callback_query(lambda c: c.data == "get_config")
@@ -73,7 +76,7 @@ async def process_get_config(callback: types.CallbackQuery):
             if existing_client:
                 # У пользователя уже есть конфиг
                 await callback.message.answer(
-                    f"⚠️ У вас уже есть активный VPN конфиг!\n\n{format_client_info(existing_client)}"
+                    f"⚠️ У вас уже есть активный VPN конфиг.\n\n{format_client_info(existing_client)}"
                 )
                 await callback.answer()
                 return
@@ -110,15 +113,15 @@ async def process_get_config(callback: types.CallbackQuery):
 
             # Отправляем сообщение об успехе с конфигом И устанавливаем клавиатуру меню
             await callback.message.answer(
-                f"✅ VPN создан успешно!\n\n{format_client_info(client)}\n\n"
-                f"<code>{vpn_url}</code>",
+                f"✅ VPN успешно активирован.\n\n{format_client_info(client)}\n\n"
+                f"🔗 Ваша персональная ссылка:\n<code>{vpn_url}</code>",
                 parse_mode="HTML",
                 reply_markup=get_user_menu_keyboard()  # Добавляем клавиатуру к первому сообщению
             )
             
             # Отправляем последнее сообщение с инструкциями
             await callback.message.answer(
-                "📱 Выберите устройство для просмотра инструкции по установке VPN:",
+                "🔧 Настройка соединения\n\nВыберите тип вашего устройства для получения инструкции по установке и настройке ftw.VPN:",
                 reply_markup=get_instruction_keyboard()
             )
     
@@ -142,7 +145,7 @@ def get_tariff_name_by_id(tariff_id):
         return "Не определен"
 
 # Обновляем обработчики для кнопок меню, теперь используем текст сообщения вместо callback_data
-@router.message(lambda message: message.text == "Мой профиль")
+@router.message(lambda message: message.text == "👤 Мой профиль")
 async def process_profile(message: types.Message):
     try:
         async with async_session() as session:
@@ -153,7 +156,7 @@ async def process_profile(message: types.Message):
             user = user_query.scalar_one_or_none()
             
             if not user:
-                await message.answer("❌ Ваш профиль не найден. Пожалуйста, запустите бота снова с помощью команды /start")
+                await message.answer("❌ Профиль не найден. Запустите бота снова с помощью команды /start")
                 return
             
             # Получаем клиента пользователя
@@ -163,11 +166,11 @@ async def process_profile(message: types.Message):
             client = client_query.scalar_one_or_none()
             
             if not client:
-                await message.answer("📱 У вас еще нет активной подписки. Выберите 'Подписка и оплата' для приобретения тарифа.")
+                await message.answer("⚠️ У вас нет активной подписки. Выберите '💼 Подписка и оплата' для приобретения тарифа.")
                 return
             
             # Форматируем срок действия
-            expiry_date = "Не ограничен"
+            expiry_date = "♾️ Не ограничен"
             if client.expiry_time:
                 expiry_date = client.expiry_time.strftime("%d.%m.%Y %H:%M")
             
@@ -176,15 +179,15 @@ async def process_profile(message: types.Message):
             
             # Формируем сообщение профиля
             profile_text = (
-                f"<b>📱 Мой профиль</b>\n\n"
-                f"<b>Telegram ID:</b> {message.from_user.id}\n"
-                f"<b>Тип подписки:</b> {tariff_name}\n"
-                f"<b>Действует до:</b> {expiry_date}\n"
+                f"<b>⚫ Цифровой след</b>\n\n"
+                f"<b>🆔 Telegram ID:</b> {message.from_user.id}\n"
+                f"<b>📋 Тип подписки:</b> {tariff_name}\n"
+                f"<b>⏱️ Действует до:</b> {expiry_date}\n"
             )
             
             # Добавляем URL конфигурации, если он есть
             if client.config_data:
-                profile_text += f"\n<b>Ваша VPN конфигурация:</b>\n<code>{client.config_data}</code>"
+                profile_text += f"\n<b>🔐 Ваша VPN конфигурация:</b>\n<code>{client.config_data}</code>"
             else:
                 profile_text += "\n⚠️ У вас нет активной VPN конфигурации"
             
@@ -193,7 +196,7 @@ async def process_profile(message: types.Message):
         logger.error(f"Ошибка при отображении профиля: {e}")
         await message.answer("❌ Произошла ошибка при загрузке профиля. Пожалуйста, попробуйте позже.")
 
-@router.message(lambda message: message.text == "Подписка и оплата")
+@router.message(lambda message: message.text == "💼 Подписка и оплата")
 async def show_subscription_info(message: types.Message):
     # Отправляем информацию о тарифах и кнопки выбора
     await message.answer(
@@ -204,7 +207,7 @@ async def show_subscription_info(message: types.Message):
 @router.callback_query(lambda c: c.data == "pay_bonus")
 async def process_bonus_payment(callback: types.CallbackQuery):
     await callback.message.edit_text(
-        "Оплата с бонусного баланса выбрана. Проверяем баланс..."
+        "💎 Оплата с бонусного баланса выбрана. Проверяем баланс..."
     )
     # Здесь будет логика проверки баланса и проведения оплаты
     # ...
@@ -228,6 +231,34 @@ async def back_to_tariffs(callback: types.CallbackQuery):
         reply_markup=get_tariffs_keyboard()
     )
     await callback.answer()
+
+@router.message(lambda message: message.text == "ℹ️ Инфо")
+async def show_info(message: types.Message):
+    # Отправляем информацию о боте
+    await message.answer(
+        "ℹ️ <b>О сервисе ftw.VPN</b>\n\n"
+        "🔒 <b>Полная анонимность</b>\n"
+        "Никакой личной информации не сохраняется на серверах, нет логов активности\n\n"
+        "🌐 <b>Доступ к заблокированным ресурсам</b>\n"
+        "Обход региональных ограничений и блокировок\n\n"
+        "⚡ <b>Высокая скорость</b>\n"
+        "Оптимизированная сеть для стабильного соединения\n\n"
+        "🔐 <b>Шифрование данных</b>\n"
+        "Защита от перехвата и анализа трафика\n\n"
+        "📱 <b>Совместимость</b>\n"
+        "Работает на всех популярных платформах\n\n"
+        "💬 <b>Поддержка</b>\n"
+        "Техническая помощь доступна 24/7(@qaserd_ll)\n\n"
+        "ftw.VPN — ваша надёжная защита в цифровом пространстве",
+        parse_mode="HTML"
+    )
+
+@router.message(lambda message: message.text == "🎁 Бонусы")
+async def show_bonuses(message: types.Message):
+    # Отправляем сообщение о бонусах
+    await message.answer(
+        "🔜 Бонусная система скоро будет доступна"
+    )
 
 def register_handlers(dp: Dispatcher):
     dp.include_router(router)

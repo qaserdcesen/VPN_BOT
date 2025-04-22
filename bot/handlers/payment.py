@@ -51,20 +51,20 @@ async def process_tariff_selection(callback: types.CallbackQuery, state: FSMCont
     # Если у пользователя уже есть email, спрашиваем, хочет ли он его использовать
     if has_email:
         await callback.message.edit_text(
-            f"У вас уже есть сохраненный email: {user.email}\n\n"
-            f"Хотите использовать его для чека или указать новый?",
+            f"Обнаружен сохраненный email: {user.email}\n\n"
+            f"Использовать его для чека или указать новый?",
             reply_markup=types.InlineKeyboardMarkup(inline_keyboard=[
                 [types.InlineKeyboardButton(text=f"Использовать {user.email}", callback_data="use_saved_email")],
                 [types.InlineKeyboardButton(text="Указать новый email", callback_data="new_email")],
-                [types.InlineKeyboardButton(text="Пропустить (без чека)", callback_data="skip_email")],
+                [types.InlineKeyboardButton(text="Без чека", callback_data="skip_email")],
                 [types.InlineKeyboardButton(text="Назад", callback_data="back_to_tariffs")],
             ])
         )
     else:
         # Если email нет, запрашиваем его
         await callback.message.edit_text(
-            f"Для создания чека нам нужен ваш email.\n\n"
-            f"Если вы не хотите получать чек, просто нажмите кнопку 'Пропустить'.",
+            f"Для формирования чека требуется ваш email.\n\n"
+            f"Если чек не требуется, выберите 'Пропустить'.",
             reply_markup=types.InlineKeyboardMarkup(inline_keyboard=[
                 [types.InlineKeyboardButton(text="Пропустить", callback_data="skip_email")],
                 [types.InlineKeyboardButton(text="Назад", callback_data="back_to_tariffs")],
@@ -89,7 +89,7 @@ async def use_saved_email(callback: types.CallbackQuery, state: FSMContext):
         if not user or not user.email:
             # Если по какой-то причине email не найден
             await callback.message.edit_text(
-                "❌ Произошла ошибка: email не найден. Пожалуйста, укажите новый email.",
+                "Ошибка: email не найден. Пожалуйста, укажите новый email.",
                 reply_markup=types.InlineKeyboardMarkup(inline_keyboard=[
                     [types.InlineKeyboardButton(text="Пропустить", callback_data="skip_email")],
                     [types.InlineKeyboardButton(text="Назад", callback_data="back_to_tariffs")],
@@ -108,7 +108,7 @@ async def use_saved_email(callback: types.CallbackQuery, state: FSMContext):
 @router.callback_query(F.data == "enter_promo")
 async def request_promo(callback: types.CallbackQuery, state: FSMContext):
     await callback.message.edit_text(
-        "Введите промокод или нажмите кнопку 'Пропустить':",
+        "🎟️ Введите промокод или выберите 'Пропустить':",
         reply_markup=types.InlineKeyboardMarkup(inline_keyboard=[
             [types.InlineKeyboardButton(text="Пропустить", callback_data="skip_promo")],
             [types.InlineKeyboardButton(text="Назад", callback_data="back_to_tariffs")],
@@ -145,13 +145,13 @@ async def process_promo(message: types.Message, state: FSMContext):
     if is_valid:
         # Создаем платеж с промокодом
         await message.answer(
-            f"✅ Промокод применен. Скидка: {discount}%",
+            f"Промокод применен. Скидка: {discount}%",
         )
         await create_payment_with_email(message, state, email, promo_code)
     else:
         # Если промокод невалидный
         await message.answer(
-            "❌ Недействительный промокод. Попробуйте другой или нажмите 'Пропустить'.",
+            "Недействительный промокод. Попробуйте другой или нажмите 'Пропустить'.",
             reply_markup=types.InlineKeyboardMarkup(inline_keyboard=[
                 [types.InlineKeyboardButton(text="Пропустить", callback_data="skip_promo")],
                 [types.InlineKeyboardButton(text="Назад", callback_data="back_to_tariffs")],
@@ -168,14 +168,14 @@ async def ask_for_promo(callback_or_message, state, email):
     
     # Спрашиваем, хочет ли пользователь ввести промокод
     await message.edit_text(
-        "Хотите использовать промокод для скидки?",
+        "🎁 Хотите использовать промокод для получения скидки?",
         reply_markup=types.InlineKeyboardMarkup(inline_keyboard=[
             [types.InlineKeyboardButton(text="Ввести промокод", callback_data="enter_promo")],
             [types.InlineKeyboardButton(text="Продолжить без промокода", callback_data="skip_promo")],
             [types.InlineKeyboardButton(text="Назад", callback_data="back_to_tariffs")],
         ])
     ) if is_callback else await message.answer(
-        "Хотите использовать промокод для скидки?",
+        "🎁 Хотите использовать промокод для получения скидки?",
         reply_markup=types.InlineKeyboardMarkup(inline_keyboard=[
             [types.InlineKeyboardButton(text="Ввести промокод", callback_data="enter_promo")],
             [types.InlineKeyboardButton(text="Продолжить без промокода", callback_data="skip_promo")],
@@ -190,7 +190,7 @@ async def ask_for_promo(callback_or_message, state, email):
 @router.callback_query(F.data == "new_email", ContactState.tariff_selected)
 async def request_new_email(callback: types.CallbackQuery, state: FSMContext):
     await callback.message.edit_text(
-        "Пожалуйста, укажите ваш новый email для чека:",
+        "Введите email для получения чека:",
         reply_markup=types.InlineKeyboardMarkup(inline_keyboard=[
             [types.InlineKeyboardButton(text="Отмена", callback_data="back_to_tariffs")],
         ])
@@ -208,7 +208,7 @@ async def process_contact(message: types.Message, state: FSMContext):
     # Проверка валидности email
     if not re.match(r"[^@]+@[^@]+\.[^@]+", email):
         await message.answer(
-            "❌ Некорректный email. Пожалуйста, введите правильный email или нажмите 'Пропустить'.",
+            "Некорректный email. Введите правильный адрес или нажмите 'Пропустить'.",
             reply_markup=types.InlineKeyboardMarkup(inline_keyboard=[
                 [types.InlineKeyboardButton(text="Пропустить", callback_data="skip_email")],
                 [types.InlineKeyboardButton(text="Назад", callback_data="back_to_tariffs")],
@@ -275,7 +275,7 @@ async def cancel_payment(callback: types.CallbackQuery):
         if success:
             # Показываем снова список тарифов
             await callback.message.edit_text(
-                "❌ Платёж отменён\n\nВыберите тариф:",
+                "Платёж отменён\n\nВыберите тариф:",
                 reply_markup=get_tariffs_keyboard()
             )
             logger.info(f"Платёж {payment_id} отменен пользователем {callback.from_user.id}")
@@ -316,21 +316,21 @@ async def process_test_success(callback: types.CallbackQuery):
         if success:
             # Показываем сообщение об успешной оплате
             await callback.message.edit_text(
-                "✅ Тестовая оплата успешно выполнена!\n\n"
-                "Ваш тариф активирован.",
+                "✅ Тестовая оплата подтверждена.\n\n"
+                "🔐 Ваш тариф активирован.",
                 reply_markup=None
             )
             logger.info(f"Тестовый платеж {payment_id} успешно завершен пользователем {callback.from_user.id}")
         else:
-            await callback.answer("Ошибка при обработке тестовой оплаты", show_alert=True)
+            await callback.answer("❌ Ошибка при обработке тестовой оплаты", show_alert=True)
             await callback.message.edit_text(
                 "❌ Произошла ошибка при обработке платежа.\n\n"
-                "Пожалуйста, попробуйте позже.",
+                "🔄 Попробуйте позже.",
                 reply_markup=get_tariffs_keyboard()
             )
     except Exception as e:
         logger.error(f"Ошибка при обработке тестового платежа {payment_id}: {e}")
-        await callback.answer("Произошла ошибка, попробуйте позже", show_alert=True)
+        await callback.answer("❌ Произошла ошибка, попробуйте позже", show_alert=True)
     
     await callback.answer()
 
@@ -345,7 +345,7 @@ async def process_yookassa_success(callback: types.CallbackQuery):
         if success:
             # Показываем сообщение об успешной оплате
             await callback.message.edit_text(
-                "✅ Оплата успешно выполнена!\n\n"
+                "Оплата подтверждена.\n\n"
                 "Ваш тариф активирован.",
                 reply_markup=None
             )
@@ -383,8 +383,8 @@ async def create_payment_with_email(callback_or_message, state, email, promo_cod
         
         if payment_id and payment_url and markup:
             text = (
-                f"💳 Для оплаты нажмите кнопку 'Оплатить'.\n"
-                f"После оплаты ваш тариф будет активирован автоматически."
+                f"Для оплаты нажмите кнопку 'Оплатить'.\n"
+                f"После успешной оплаты тариф будет активирован автоматически."
             )
             
             if is_callback:
@@ -392,14 +392,14 @@ async def create_payment_with_email(callback_or_message, state, email, promo_cod
             else:
                 await message.answer(text, reply_markup=markup)
         else:
-            text = "❌ Не удалось создать платеж. Пожалуйста, попробуйте позже."
+            text = "Не удалось создать платеж. Попробуйте позже."
             
             if is_callback:
                 await message.edit_text(text)
             else:
                 await message.answer(text)
     except ValueError as e:
-        text = f"❌ Ошибка: {str(e)}"
+        text = f"Ошибка: {str(e)}"
         
         if is_callback:
             await message.edit_text(text)
@@ -407,7 +407,7 @@ async def create_payment_with_email(callback_or_message, state, email, promo_cod
             await message.answer(text)
     except Exception as e:
         logger.error(f"Ошибка при создании платежа: {e}")
-        text = "❌ Произошла ошибка при обработке платежа. Пожалуйста, попробуйте позже."
+        text = "Произошла ошибка при обработке платежа. Попробуйте позже."
         
         if is_callback:
             await message.edit_text(text)

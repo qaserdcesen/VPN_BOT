@@ -45,7 +45,7 @@ YOOKASSA_SECRET_KEY = os.getenv("YOOKASSA_SECRET_KEY")
 if not YOOKASSA_SECRET_KEY:
     logger.warning("YOOKASSA_SECRET_KEY не найден")
     
-PAYMENT_RETURN_URL = os.getenv("PAYMENT_RETURN_URL", "https://t.me/your_bot_username")
+PAYMENT_RETURN_URL = os.getenv("PAYMENT_RETURN_URL", "https://t.me/ftwVPN_BOT")
 
 # Печатаем финальные значения переменных (безопасно)
 logger.info("Финальные значения переменных:")
