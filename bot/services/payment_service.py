@@ -29,9 +29,9 @@ try:
     import yookassa
     from yookassa import Configuration, Payment
     yookassa_available = True
-    logger.info("YooKassa module imported successfully")
+    logger.info("YooKassa модуль успешно импортирован")
 except ImportError:
-    logger.warning("YooKassa module not found. Using mock implementation.")
+    logger.warning("YooKassa модуль не найден. Используем тестовый режим.")
     
     # Mock classes for YooKassa
     class Configuration:
@@ -40,42 +40,44 @@ except ImportError:
         
         @staticmethod
         def configure(*args, **kwargs):
-            logger.error("YooKassa module not available. Cannot configure.")
+            logger.error("YooKassa модуль недоступен. Невозможно настроить.")
     
     class Payment:
         @staticmethod
         def create(*args, **kwargs):
-            logger.error("YooKassa module not available. Cannot create payment.")
+            logger.error("YooKassa модуль недоступен. Невозможно создать платеж.")
             return None
         
         @staticmethod
         def cancel(*args, **kwargs):
-            logger.error("YooKassa module not available. Cannot cancel payment.")
+            logger.error("YooKassa модуль недоступен. Невозможно отменить платеж.")
             return None
         
         @staticmethod
         def find_one(*args, **kwargs):
-            logger.error("YooKassa module not available. Cannot find payment.")
+            logger.error("YooKassa модуль недоступен. Невозможно найти платеж.")
             return None
 
 # Инициализация YooKassa
 try:
     if yookassa_available and YOOKASSA_SHOP_ID and YOOKASSA_SECRET_KEY:
         logger.info(f"Инициализация YooKassa с ID магазина: {YOOKASSA_SHOP_ID}")
+        logger.info(f"Секретный ключ: {YOOKASSA_SECRET_KEY[:5]}...{YOOKASSA_SECRET_KEY[-5:]}")
         Configuration.account_id = YOOKASSA_SHOP_ID
         Configuration.secret_key = YOOKASSA_SECRET_KEY
-        logger.info("YooKassa initialized successfully")
         yookassa_configured = True
+        logger.info("YooKassa успешно инициализирована")
     else:
         yookassa_configured = False
         if not yookassa_available:
             logger.warning("YooKassa не инициализирована: модуль не найден")
         elif not (YOOKASSA_SHOP_ID and YOOKASSA_SECRET_KEY):
-            
             logger.warning("YooKassa не инициализирована: отсутствуют учетные данные")
+        logger.warning(f"Будет использован тестовый режим оплаты: TEST_MODE={TEST_MODE}, yookassa_configured={yookassa_configured}")
 except Exception as e:
     yookassa_configured = False
-    logger.error(f"YooKassa initialization error: {e}")
+    logger.error(f"Ошибка инициализации YooKassa: {e}")
+    logger.warning(f"Будет использован тестовый режим оплаты: TEST_MODE={TEST_MODE}, yookassa_configured={yookassa_configured}")
 
 class PaymentService:
     """Сервис для работы с платежами YooKassa"""
