@@ -11,6 +11,7 @@ from bot.utils.db import init_db
 from bot.utils.middlewares import ThrottlingMiddleware, BanCheckMiddleware, AntiFloodMiddleware
 from bot.services.ban_service import BanService
 from bot.services.payment_service import PaymentService
+from bot.services.notification_service import NotificationService
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
@@ -54,6 +55,10 @@ async def main() -> None:
     # Запускаем задачу проверки платежей в фоновом режиме
     asyncio.create_task(PaymentService.start_payment_checker(bot, check_interval=10))
     logger.info("Запущена проверка платежей каждые 10 секунд")
+    
+    # Запускаем задачу проверки истекающих подписок в фоновом режиме
+    asyncio.create_task(NotificationService.start_notification_checker(bot, check_interval=3600))
+    logger.info("Запущена проверка истекающих подписок каждый час")
     
     logger.info("Запуск бота...")
     try:
