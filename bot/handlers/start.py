@@ -34,17 +34,9 @@ async def cmd_start(message: types.Message):
 
 # Функция для форматирования информации о клиенте
 def format_client_info(client):
-    # Формирование строки лимита трафика
-    if client.total_traffic == 0:
-        traffic_info = "Безлимит"
-    else:
-        traffic_info = f"{client.total_traffic / (1024 * 1024 * 1024):.1f} GB"
-    
     return (
-        f"🔑 Идентификатор: {client.uuid}\n"
         f"👤 Имя в сети: {client.email}\n"
-        f"📱 Лимит устройств: {client.limit_ip}\n"
-        f"📊 Трафик: {traffic_info}"
+        f"📱 Лимит одновременно подключенных устройств: {client.limit_ip}"
     )
 
 @router.callback_query(lambda c: c.data == "get_config")
@@ -113,7 +105,11 @@ async def process_get_config(callback: types.CallbackQuery):
 
             # Отправляем сообщение об успехе с конфигом И устанавливаем клавиатуру меню
             await callback.message.answer(
-                f"✅ VPN успешно активирован.\n\n{format_client_info(client)}\n\n"
+                f"✅ VPN успешно активирован.\n\n"
+                f"{format_client_info(client)}\n\n"
+                f"🔴 🔴 🔴 <b>ВНИМАНИЕ!</b> 🔴 🔴 🔴\n"
+                f"<b>БЕСПЛАТНЫЙ ТАРИФ ОГРАНИЧЕН ВСЕГО 2 ГБ ТРАФИКА!</b>\n"
+                f"<i>Для получения большего лимита выберите платный тариф</i>\n\n"
                 f"🔗 Ваша персональная ссылка:\n<code>{vpn_url}</code>",
                 parse_mode="HTML",
                 reply_markup=get_user_menu_keyboard()  # Добавляем клавиатуру к первому сообщению
@@ -177,19 +173,25 @@ async def process_profile(message: types.Message):
             # Получаем название тарифа
             tariff_name = get_tariff_name_by_id(client.tariff_id)
             
+            # Добавляем предупреждение для бесплатного тарифа
+            warning_text = ""
+            if client.tariff_id == 0 and client.total_traffic == 2 * 1024 * 1024 * 1024:
+                warning_text = "\n\n⚠️ Бесплатный тариф ограничен 2 ГБ трафика. Для расширения лимита выберите платный тариф."
+            
             # Формируем сообщение профиля
             profile_text = (
-                f"<b>⚫ Цифровой след</b>\n\n"
+                f"<b>⚫ ftw.VPN</b>\n\n"
                 f"<b>🆔 Telegram ID:</b> {message.from_user.id}\n"
                 f"<b>📋 Тип подписки:</b> {tariff_name}\n"
-                f"<b>⏱️ Действует до:</b> {expiry_date}\n"
+                f"<b>⏱️ Действует до:</b> {expiry_date}"
+                f"{warning_text}"
             )
             
             # Добавляем URL конфигурации, если он есть
             if client.config_data:
-                profile_text += f"\n<b>🔐 Ваша VPN конфигурация:</b>\n<code>{client.config_data}</code>"
+                profile_text += f"\n\n<b>🔐 Ваша VPN конфигурация:</b>\n<code>{client.config_data}</code>"
             else:
-                profile_text += "\n⚠️ У вас нет активной VPN конфигурации"
+                profile_text += "\n\n⚠️ У вас нет активной VPN конфигурации"
             
             await message.answer(profile_text, parse_mode="HTML")
     except Exception as e:
