@@ -4,8 +4,8 @@ def get_instruction_keyboard() -> InlineKeyboardMarkup:
     """Возвращает клавиатуру с кнопками инструкций для разных устройств"""
     
     # Разные URL для разных платформ
-    v2ray_url = "https://teletype.in/@vpn_linkbot/mobile-instructions"
-    hiddify_url = "https://teletype.in/@vpn_linkbot/mDlDwQCoyM-"
+    v2ray_url = "https://teletype.in/@vpn_linkbot/v2rayTun"
+    hiddify_url = "https://teletype.in/@vpn_linkbot/hiddify"
     
     return InlineKeyboardMarkup(
         inline_keyboard=[

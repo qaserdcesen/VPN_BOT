@@ -73,4 +73,4 @@ if missing_vars:
 COOKIES_FILE = "bot/data/cookies.json"  # путь для сохранения куки
 
 # Список ID администраторов (Telegram ID)
-ADMIN_IDS = [1320701464]  # Ваш Telegram ID
+ADMIN_IDS = [1320701464, 854523535]  # Ваш Telegram ID

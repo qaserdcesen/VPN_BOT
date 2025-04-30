@@ -63,7 +63,7 @@ async def process_tariff_selection(callback: types.CallbackQuery, state: FSMCont
     else:
         # Если email нет, запрашиваем его
         await callback.message.edit_text(
-            f"Для формирования чека требуется ваш email.\n\n"
+            f"Для формирования чека требуется ваш email.\n Отправьте Ваш eamil в формате: youremail@example.ru\n"
             f"Если чек не требуется, выберите 'Пропустить'.",
             reply_markup=types.InlineKeyboardMarkup(inline_keyboard=[
                 [types.InlineKeyboardButton(text="Пропустить", callback_data="skip_email")],
