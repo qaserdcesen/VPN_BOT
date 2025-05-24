@@ -234,19 +234,28 @@ class VPNService:
                     })
                 }
 
-                update_client_url = f"{self.base_url}/panel/api/inbounds/updateClient/{self.inbound_id}"
+                update_client_url = f"{self.base_url}/panel/api/inbounds/updateClient/{user_uuid}"
                 logger.info(f"Отправляем запрос на обновление клиента {nickname} ({user_uuid})")
                 logger.info(f"Данные для обновления: {client_data}")
                 logger.info(f"URL запроса: {update_client_url}")
                 
                 async with session.post(update_client_url, headers=headers, json=client_data) as response:
-                    client_response_text = await response.text()
-                    logger.info(f"Статус-код при обновлении: {response.status}")
-                    logger.info(f"Ответ сервера: {client_response_text}")
+                    text = await response.text()
+                    logger.info(
+                        "UPDATE-client → %s %s\n"
+                        "Headers-sent: %s\n"
+                        "Status-code: %s\n"
+                        "Response-body (%d bytes): %s",
+                        "POST",               # метод
+                        update_client_url,    # url
+                        client_data,          # payload
+                        response.status,
+                        len(text), text[:500] # режем, чтоб не захламлять
+                    )
                     
                     if response.status != 200:
-                        logger.error(f"Ошибка при обновлении клиента: {client_response_text}")
-                        raise Exception(f"Ошибка при обновлении клиента: {client_response_text}")
+                                logger.error("500 от x-ui. Читаем systemd-журнал за последние 20 строк…")
+                                os.system("journalctl -u x-ui.service -n 20 --no-pager")
                     
                     logger.info(f"Клиент {nickname} ({user_uuid}) успешно обновлен!")
                     return True
