@@ -218,7 +218,7 @@ class VPNService:
                 # Обновляем клиента
                 client_data = {
                     "id": int(self.inbound_id),
-                    "settings": json.dumps({
+                    "settings": {
                         "clients": [{
                             "id": user_uuid,
                             "flow": "xtls-rprx-vision",
@@ -231,7 +231,7 @@ class VPNService:
                             "subId": "test-sub-id",
                             "reset": 0
                         }]
-                    })
+                    }
                 }
 
                 update_client_url = f"{self.base_url}/panel/api/inbounds/updateClient/{user_uuid}"
