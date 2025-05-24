@@ -190,7 +190,10 @@ class VPNService:
                 self._update_cookie_jar(cookie_jar, saved_cookies)
                 logger.info("Загружены сохраненные куки для обновления клиента.")
 
-            headers = {"Accept": "application/json"}
+            headers = {
+                "Content-Type": "application/json",
+                "Accept": "application/json"
+            }
 
             async with aiohttp.ClientSession(cookie_jar=cookie_jar) as session:
                 # Проверка необходимости авторизации
@@ -215,7 +218,7 @@ class VPNService:
                 # Обновляем клиента
                 client_data = {
                     "id": int(self.inbound_id),
-                    "settings": json.dumps({
+                    "settings": {
                         "clients": [{
                             "id": user_uuid,
                             "flow": "xtls-rprx-vision",
@@ -228,7 +231,7 @@ class VPNService:
                             "subId": "test-sub-id",
                             "reset": 0
                         }]
-                    })
+                    }
                 }
 
                 update_client_url = f"{self.base_url}/panel/api/inbounds/updateClient/{user_uuid}"
